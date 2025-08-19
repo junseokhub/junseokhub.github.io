@@ -33,3 +33,6 @@ defaults:
       layout: single
       author_profile: true
       css: "/assets/css/custom.css"
+
+footer:
+  powered_by: false
