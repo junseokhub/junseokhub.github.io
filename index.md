@@ -1,5 +1,5 @@
 ---
-layout: single
+layout: splash
 title: "👋 안녕하세요!"
 permalink: /
 author_profile: true
