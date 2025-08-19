@@ -9,5 +9,18 @@ title: 환영합니다!
 
 ## 📁 프로젝트 목록
 
-- [프로젝트 A](./projects/bublitt)
-- [프로젝트 B](./projects/coconutive)
+<div class="projects-gallery">
+
+  <a href="./projects/bublitt" class="project-item">
+    <img src="/assets/images/bublitt-thumbnail.png" alt="프로젝트 Bublitt" />
+    <h3>프로젝트 Bublitt</h3>
+    <p>간단 설명: 혁신적인 메모 앱</p>
+  </a>
+
+  <a href="./projects/coconutive" class="project-item">
+    <img src="/assets/images/coconutive-thumbnail.png" alt="프로젝트 Coconutive" />
+    <h3>프로젝트 Coconutive</h3>
+    <p>간단 설명: 생산성 향상 도구</p>
+  </a>
+
+</div>
