@@ -1,6 +1,6 @@
-import React, {useState, useEffect} from "react";
-import { ThemeProvider } from '@mui/material/styles';
-import { darkTheme, lightTheme } from '../theme';
+import { useState, useEffect } from "react";
+import { ThemeProvider } from "@mui/material/styles";
+import { darkTheme, lightTheme } from "../theme";
 
 import {
   Main,
@@ -8,31 +8,33 @@ import {
   Expertise,
   Project,
   Contact,
+  About,
   Navigation,
   Footer,
 } from "./components";
-import FadeIn from './components/FadeIn';
-import './index.scss';
+import FadeIn from "./components/FadeIn";
+import "./index.scss";
 
 function App() {
-    const [mode, setMode] = useState<string>('dark');
+    const [mode, setMode] = useState<string>("dark");
 
     const handleModeChange = () => {
-        setMode(prevMode => prevMode === 'dark' ? 'light' : 'dark');
+        setMode(prevMode => prevMode === "dark" ? "light" : "dark");
     }
 
-    const currentTheme = mode === 'dark' ? darkTheme : lightTheme;
+    const currentTheme = mode === "dark" ? darkTheme : lightTheme;
 
     useEffect(() => {
-        window.scrollTo({top: 0, left: 0, behavior: 'smooth'});
+        window.scrollTo({top: 0, left: 0, behavior: "smooth"});
     }, []);
 
     return (
     <ThemeProvider theme={currentTheme}>
-        <div className={`main-container ${mode === 'dark' ? 'dark-mode' : 'light-mode'}`}>
+        <div className={`main-container ${mode === "dark" ? "dark-mode" : "light-mode"}`}>
             <Navigation parentToChild={{mode}} modeChange={handleModeChange}/>
             <FadeIn transitionDuration={700}>
                 <Main/>
+                <About/>
                 <Expertise/>
                 <Timeline/>
                 <Project/>

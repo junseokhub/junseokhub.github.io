@@ -1,13 +1,10 @@
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import '../assets/styles/Contact.scss';
-// import emailjs from '@emailjs/browser';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
+import { Box, Button, CircularProgress, TextField } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
-import TextField from '@mui/material/TextField';
+import { useEmailSend } from '../hooks/useEmailSend';
 
 function Contact() {
-
   const [name, setName] = useState<string>('');
   const [email, setEmail] = useState<string>('');
   const [message, setMessage] = useState<string>('');
@@ -16,37 +13,30 @@ function Contact() {
   const [emailError, setEmailError] = useState<boolean>(false);
   const [messageError, setMessageError] = useState<boolean>(false);
 
-  const form = useRef();
+  const form = useRef<HTMLFormElement>(null);
 
-  const sendEmail = (e: any) => {
+  const { sendEmail, loading, error } = useEmailSend();
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     setNameError(name === '');
     setEmailError(email === '');
     setMessageError(message === '');
 
-    /* Uncomment below if you want to enable the emailJS */
-
-    // if (name !== '' && email !== '' && message !== '') {
-    //   var templateParams = {
-    //     name: name,
-    //     email: email,
-    //     message: message
-    //   };
-
-    //   console.log(templateParams);
-    //   emailjs.send('service_id', 'template_id', templateParams, 'api_key').then(
-    //     (response) => {
-    //       console.log('SUCCESS!', response.status, response.text);
-    //     },
-    //     (error) => {
-    //       console.log('FAILED...', error);
-    //     },
-    //   );
-    //   setName('');
-    //   setEmail('');
-    //   setMessage('');
-    // }
+    if (name !== '' && email !== '' && message !== '') {
+      const templateParams = { name, email, message };
+      const isSuccess = await sendEmail(templateParams);
+      
+      if (isSuccess) {
+        alert("이메일 전송 완료!");
+        setName('');
+        setEmail('');
+        setMessage('');
+      } else {
+        alert(error || "이메일 전송 실패");
+      }
+    }
   };
 
   return (
@@ -61,6 +51,7 @@ function Contact() {
             noValidate
             autoComplete="off"
             className='contact-form'
+            onSubmit={handleSubmit}
           >
             <div className='form-flex'>
               <TextField
@@ -69,9 +60,7 @@ function Contact() {
                 label="Your Name"
                 placeholder="What's your name?"
                 value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                }}
+                onChange={(e) => setName(e.target.value)}
                 error={nameError}
                 helperText={nameError ? "Please enter your name" : ""}
               />
@@ -81,9 +70,7 @@ function Contact() {
                 label="Email / Phone"
                 placeholder="How can I reach you?"
                 value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                }}
+                onChange={(e) => setEmail(e.target.value)}
                 error={emailError}
                 helperText={emailError ? "Please enter your email or phone number" : ""}
               />
@@ -97,14 +84,17 @@ function Contact() {
               rows={10}
               className="body-form"
               value={message}
-              onChange={(e) => {
-                setMessage(e.target.value);
-              }}
+              onChange={(e) => setMessage(e.target.value)}
               error={messageError}
               helperText={messageError ? "Please enter the message" : ""}
             />
-            <Button variant="contained" endIcon={<SendIcon />} onClick={sendEmail}>
-              Send
+            <Button 
+              type="submit" 
+              variant="contained" 
+              endIcon={<SendIcon />} 
+              disabled={loading} // Disable button while loading
+            >
+              {loading ? <CircularProgress size={24} /> : "Send"}
             </Button>
           </Box>
         </div>

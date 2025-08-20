@@ -10,6 +10,6 @@ export const fetchMarkdownContent = async (title: string): Promise<string> => {
     return content;
   } catch (error) {
     console.error("fetchMarkdownContent 오류:", error);
-    return 'Markdown 내용을 불러오는 데 오류가 발생했습니다.';
+    return "Markdown 내용을 불러오는 데 오류가 발생했습니다.";
   }
 };

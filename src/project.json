@@ -1,23 +1,56 @@
 [
   {
     "id": 1,
-    "title": "Bublitt",
-    "link": "",
-    "desc": "Developed",
-    "img": "mock10"
+    "title": "삼성닷컴",
+    "link": "https://samsung.com",
+    "desc": "삼성닷컴 운영",
+    "img": "samsung.png",
+    "since": "2022.04 ~ 2023.06",
+    "hasMd": false
   },
   {
     "id": 2,
-    "title": "coconutive",
-    "link": "",
-    "desc": "Designed",
-    "img": "mock09"
+    "title": "신세계 면세점",
+    "link": "https://www.ssgdfs.com/cb/kr/?utm_source=header&utm_medium=quickicon&utm_id=ClickEvent_Chatbot",
+    "desc": "신세계 면세점 운영",
+    "img": "ssg.png",
+    "since": "2023.03 ~ 2023.08",
+    "hasMd": false
   },
   {
     "id": 3,
-    "title": "Astro Raiders",
+    "title": "SK-EcoPlant 사내 챗봇",
     "link": "",
+    "desc": "SK 사내 챗봇",
+    "img": "skeco.png",
+    "since": "2023.04 ~ 2023.06",
+    "hasMd": true
+  },
+  {
+    "id": 4,
+    "title": "식약처 코스봇",
+    "link": "http://aiconsulting.helpcosmetic.or.kr/",
     "desc": "Developed",
-    "img": "mock08"
+    "img": "cosbot.jpg",
+    "since": "2024.05 ~ 2025.05",
+    "hasMd": true
+  },
+  {
+    "id": 5,
+    "title": "coconutive",
+    "link": "https://www.coconutive.com/",
+    "desc": "Designed",
+    "img": "coconutive.png",
+    "since": "2023.10 ~ 2024.12",
+    "hasMd": true
+  },
+  {
+    "id": 6,
+    "title": "Bublitt",
+    "link": "http://bublitt.com/",
+    "desc": "Developed",
+    "img": "bublitt.png",
+    "since": "2023.09 ~ 2025.05",
+    "hasMd": true
   }
 ]

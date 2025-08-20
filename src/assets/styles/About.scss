@@ -1,0 +1,17 @@
+.about-container {
+  display: flex;
+  padding: 5% 10%;
+  text-align: left;
+}
+
+.about-wrapper {
+  width: 100%;
+}
+
+@media screen and (max-width: 700px) {
+  .about-container {
+    display: block;
+    padding: 5%;
+    margin-bottom: 40px;
+  }
+}
