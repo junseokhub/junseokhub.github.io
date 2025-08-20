@@ -4,6 +4,15 @@ OpenAI 기반 LLM 챗봇 API와 사용자 발화에 대한 주제 추천 기능�
 
 ---
 
+### ⚙️ 사용 기술 스택
+**BackEnd** : SpringBoot, Nest.js, TypeORM, JPA, Flask(DBSCAN 용)
+
+**Database** : MySQL, Milvus, Redis, MongoDB
+
+**Infra** : Kubernetes, BuildKit, ArgoCD, Jenkins, AWS(VPC, Bastion Host, EC2, LoadBalancer), Nginx, Grafana, Prometheus
+
+---
+
 ### ✅ **주요 성과 및 기술**
 
 - NestJS → Spring Boot 전환으로 **보안성과 성능 향상**
