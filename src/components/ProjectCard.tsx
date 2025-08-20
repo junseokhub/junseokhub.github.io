@@ -40,7 +40,12 @@ export const ProjectCard = ({ project, openModal }: ProjectCardProps) => {
         </h2>
       )}
       <p className="project-since-info" style={{ fontSize: "15px"}}>{project.since}</p>
-      <p className="project-description">{project.desc}</p>
+      <p
+        className="project-description"
+        dangerouslySetInnerHTML={{
+          __html: project.desc.replace(/\n/g, "<br />"),
+        }}
+      ></p>
     </div>
   );
 };
