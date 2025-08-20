@@ -1,8 +1,10 @@
-import { Modal, Box, Typography } from "@mui/material";
+import { Modal, Box } from "@mui/material";
 import ReactMarkdown from "react-markdown";
 import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
-import type { ProjectDetailModalProps } from "./types/projectType"; 
+import type { ProjectDetailModalProps } from "./types/projectType";
+import CircularProgress from "@mui/material/CircularProgress"; 
+import Alert from "@mui/material/Alert"; 
 
 export const ProjectDetailModal = (props: ProjectDetailModalProps) => { 
   const { open, onClose, selectedProject, markdownContent, loading, error } = props;
@@ -36,10 +38,20 @@ export const ProjectDetailModal = (props: ProjectDetailModalProps) => {
         
         {selectedProject && (
           <>
-            {loading && <Typography className="modal-status-text" sx={{ color: "text.primary" }}>Loading...</Typography>}
-            {error && <Typography className="modal-status-text error" sx={{ color: "error.main" }}>{error}</Typography>}
+            {loading && (
+              <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100px", p: 2 }}>
+                <CircularProgress />
+              </Box>
+            )}
+
+            {error && (
+              <Alert severity="error" sx={{ my: 2 }}>
+                {error}
+              </Alert>
+            )}
+
             {!loading && !error && markdownContent && (
-              <ReactMarkdown >{markdownContent}</ReactMarkdown>
+              <ReactMarkdown>{markdownContent}</ReactMarkdown>
             )}
           </>
         )}

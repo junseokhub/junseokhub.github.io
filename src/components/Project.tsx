@@ -31,23 +31,20 @@ export default function Project() {
 
   const handlePageChange = (_event: ChangeEvent<unknown>, value: number) => { 
     setCurrentPage(value);
-    // window.scrollTo(0, 0); 
   };
-
 
   const openModal = async (project: ProjectType): Promise<void> => {
     setSelectedProject(project);
-    setLoading(true);
-    setError("");
+    setLoading(true); 
+    setError(""); 
 
     try {
       const content = await fetchMarkdownContent(project.title);
       setMarkdownContent(content);
     } catch (err) {
-      console.error("Failed to load markdown:", err);
       setError("마크다운 내용을 불러오는 데 오류가 발생했습니다.");
     } finally {
-      setLoading(false);
+      setLoading(false); 
     }
   };
 
@@ -60,38 +57,41 @@ export default function Project() {
   return (
     <div className="projects-container" id="projects">
       <h1>Projects</h1>
-      <div className="projects-grid">
-        {currentProjects.map((project) => (
-            <ProjectCard 
-              key={project.id}
-              project={project}
-              openModal={openModal}
+      
+      <>
+        <div className="projects-grid">
+          {currentProjects.map((project) => (
+              <ProjectCard 
+                key={project.id}
+                project={project}
+                openModal={openModal}
+              />
+            ))}
+        </div>
+        <div style={{ display: "flex", justifyContent: "center"}}>
+          <Stack spacing={2} sx={{ mt: 4}}>
+            <MuiPagination 
+              count={totalPages}
+              page={currentPage}
+              onChange={handlePageChange}
+              color="primary"
+              siblingCount={1}
+              boundaryCount={1} 
+              showFirstButton
+              showLastButton
             />
-          ))}
-      </div>
-      <div style={{ display: "flex", justifyContent: "center"}}>
-        <Stack spacing={2} sx={{ mt: 4}}>
-          <MuiPagination 
-            count={totalPages}
-            page={currentPage}
-            onChange={handlePageChange}
-            color="primary"
-            siblingCount={1}
-            boundaryCount={1} 
-            showFirstButton
-            showLastButton
-          />
-        </Stack>
+          </Stack>
+        </div>
+      </>
 
-        <ProjectDetailModal
-          open={selectedProject !== null}
-          onClose={closeModal}
-          selectedProject={selectedProject}
-          markdownContent={markdownContent}
-          loading={loading}
-          error={error}
-        />
-      </div>
+      <ProjectDetailModal
+        open={selectedProject !== null}
+        onClose={closeModal}
+        selectedProject={selectedProject}
+        markdownContent={markdownContent}
+        loading={loading}
+        error={error}
+      />
     </div>
   );
 }

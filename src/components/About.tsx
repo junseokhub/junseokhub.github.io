@@ -73,7 +73,7 @@ function About() {
           </Collapse>
         <Button
             variant="contained"
-            size="medium"
+            size="small"
             onClick={toggleContent}
             sx={{
               marginTop: "10px",
@@ -84,7 +84,7 @@ function About() {
               },
             }}
           >
-            {expanded ? "간단히 보기" : "자세히 보기"}
+            {expanded ? "Close" : "More"}
           </Button>
         </div>
     </div>

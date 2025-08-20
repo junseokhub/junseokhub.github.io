@@ -1,22 +1,32 @@
+/* src/assets/styles/Project.scss */
+
 .projects-container {
     display: flex;
     flex-direction: column;
     padding: 5% 10%;
     text-align: left;
 }
-  
+
 .projects-container .projects-grid {
     display: grid;
     grid-template-columns: repeat(3, 400px);
     grid-gap: 50px;
+    justify-content: center;
+    justify-items: center;
+    margin: 0 auto;
+    max-width: 1300px;
+    min-height: 500px;
 }
 
 .projects-container .projects-grid .project {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    width: 100%;
+    width: 400px;
     margin: 0;
+
+    border-radius: 10px;
+    overflow: hidden;
 }
 
 .project-image-wrapper {
@@ -28,25 +38,42 @@
     border-top-right-radius: 10px;
 }
 
-
 .project-image-wrapper img {
     width: 100%;
     height: 220px;
+    object-fit: cover;
+    display: block;
 }
 
-  
-  
+.project h2 {
+    margin: 0;
+    margin-bottom: 5px;
+}
+
 .project h2:hover {
     text-decoration: underline;
-    transition: color .15s ease-in-out,background-color .15s ease-in-out,border-color .15s ease-in-out;
+    transition: color .15s ease-in-out, background-color .15s ease-in-out, border-color .15s ease-in-out;
 }
-  
+
+.project-since-info {
+    margin-top: 0;
+    margin-bottom: 5px;
+    font-size: 15px;
+    color: #777;
+}
+
+.project-description {
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-bottom: 15px;
+}
+
 .zoom {
     border-radius: 5px;
     transition: transform .2s;
     margin: 0 auto;
 }
-  
+
 .zoom:hover {
     transform: scale(1.05);
 }
@@ -54,15 +81,38 @@
 @media screen {
     @media (max-width: 1300px) {
         .projects-container {
-            display: block;
+            display: flex;
+            flex-direction: column;
             padding-left: 5%;
             padding-right: 5%;
         }
-  
         .projects-container .projects-grid {
-            display: block;
+            grid-template-columns: repeat(auto-fit, minmax(304px, 1fr));
+            max-width: 100%;
+            margin: 0 auto;
+            justify-content: center;
         }
-      
+        .projects-container .projects-grid .project {
+            padding-bottom: 5%;
+            width: 100%;
+            max-width: 400px;
+        }
+    }
+}
+
+@media screen {
+    @media (max-width: 700px) {
+        .projects-container {
+            display: flex;
+            flex-direction: column;
+            padding-left: 5%;
+            padding-right: 5%;
+        }
+        .projects-container .projects-grid {
+            grid-template-columns: 1fr;
+            grid-gap: 20px;
+            justify-content: center;
+        }
         .projects-container .projects-grid .project {
             padding-bottom: 5%;
         }

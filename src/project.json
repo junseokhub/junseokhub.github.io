@@ -52,5 +52,14 @@
     "img": "bublitt.png",
     "since": "2023.09 ~ 2025.05",
     "hasMd": true
+  },
+    {
+    "id": 7,
+    "title": "Bublitt",
+    "link": "http://bublitt.com/",
+    "desc": "Developed",
+    "img": "bublitt.png",
+    "since": "2023.09 ~ 2025.05",
+    "hasMd": true
   }
 ]
