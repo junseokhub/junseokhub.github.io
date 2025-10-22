@@ -29,3 +29,7 @@ export interface ProjectImageProps {
   hasMd: boolean;
   onClick: (e: React.MouseEvent) => void;
 }
+
+export interface CustomLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorElement> {
+    href?: string;
+  }

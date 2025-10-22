@@ -40,6 +40,7 @@ export default function Project() {
 
     try {
       const content = await fetchMarkdownContent(project.title);
+      console.log(project.title)
       setMarkdownContent(content);
     } catch (err) {
       setError("마크다운 내용을 불러오는 데 오류가 발생했습니다.");
