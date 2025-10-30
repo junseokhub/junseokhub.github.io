@@ -15,14 +15,24 @@ OpenAI & RAG 기반 LLM 챗봇 API와 사용자 발화에 대한 주제 추천 �
 
 ### ✅ **주요 성과 및 기술**
 
-- NestJS → Spring Boot 전환으로 **기업 환경에 적합**, **성능,보안,트랜잭션 안정성 확보**.
-- Milvus, Pinecone 벡터 DB 연동 → **실시간 임베딩 및 유사도 검색**.
-- URL/PDF 문서 → 임베딩 → 주제 추천까지 **비정형 데이터 관리 체계 자동화**.
-- Redis 캐시 활용 → **임베딩 재계산 비용 35% 절감**, OpenAI API 비용 절감.
-- AWS VPC 및 Bastion 환경 구성.
-- **DBSCAN 기반 Fallback 주체 추천 시스템** 도입.
-- **Jenkins CI/CD → ArgoCD + Helm 기반 GitOps로 전환**, 운영 효율성 및 보안성 강화.
-- Kubernetes 환경 도입.
+- **자연어 처리 및 벡터화 기반 주제 추천 시스템 개발**  
+  - OpenAI Embedding + Milvus/Pinecone 벡터 DB를 활용한 **실시간 유사도 검색 및 주제 추천**  
+  - **DBSCAN 클러스터링 기반 Fallback 추천 로직** 적용으로 챗봇 응답 신뢰도 **20% 향상**
+
+- **비정형 데이터 처리 및 RAG 아키텍처 구현**  
+  - 웹 크롤링 데이터를 **PDF 변환 후 임베딩 벡터 DB 저장**  
+  - **RAG 아키텍처 기반 문맥 질의응답(QA) 시스템** 구축
+
+- **플랫폼 및 아키텍처 고도화**  
+  - 기존 **NestJS → Spring Boot 전환**으로 기업 환경에 적합한 **보안성, 성능, 트랜잭션 안정성** 확보  
+  - **AWS VPC + Bastion 환경 구성**을 통한 인프라 보안 강화
+
+- **운영 자동화 및 모니터링 체계 확립**  
+  - **Jenkins CI/CD → ArgoCD + Helm 기반 GitOps 전환**으로 배포 효율성 및 운영 안정성 향상  
+  - **Kubernetes, Docker, Prometheus, Grafana**를 활용한 컨테이너 오케스트레이션 및 실시간 모니터링 구축
+
+- **데이터 품질 및 테스트 자동화**  
+  - 사용자 발화와 벡터 데이터의 매칭 정확도를 검증하는 **테스트 모듈 개발 및 자동화 파이프라인 구성**
 
 ---
 
