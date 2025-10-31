@@ -17,12 +17,12 @@
   - 프로젝트 전반의 **서버, 인프라, 배포 파이프라인**을 독립적으로 설계 및 구현  
   - **Nest.js + TypeORM** 기반 백엔드 아키텍처 구성 및 API 서버 구축
 
-- **DialogFlow ES 통합 및 관리 기능 개발**
+- **Google DialogFlow ES 통합 및 관리 기능 개발**
   - 자체 관리 UI를 통해 **Intent / Entity 등록·수정·삭제**가 가능한 **백엔드 API** 개발  
   - 각 대화 시나리오별 **Slot Filling** 적용으로 필요한 정보 자동 수집 및 문맥 기반 응답 강화
 
 - **Google Sheets 연동 자동화**
-  - 접수 데이터를 **DialogFlow SlotFilling 결과값으로 자동 채움 및 실시간 시트 업데이트**  
+  - 접수 데이터를 **DialogFlow SlotFilling 결과값 실시간 시트 업데이트**  
   - 시트별 접수 내역 실시간 확인 가능, 관리 효율성 향상
 
 - **프론트엔드 챗봇 SDK 배포 자동화**
