@@ -26,7 +26,7 @@ OpenAI & RAG 기반 LLM 챗봇 API와 사용자 발화에 대한 주제 추천 �
 - **플랫폼 및 아키텍처 고도화**  
   -  기존 **NestJS(TypeORM)->Spring Boot(JPA)** 마이그레이션으로 기관 및 기업 환경에 적합한 보안성, 성능, 트랜잭션 안정성 확보  
   -  복합 트랜잭션 구조를 @Transactional + 전파 레벨 세분화로 관리, 동시성 이슈 및 락 경합 문제 해소
-  -  JPA Lazy Loading에 따른 N+1 문제를 EntityGraph로 개선
+  -  Orchestrator 패턴을 활용하여 서비스 계층에서 벡터 검색, OpenAI 기반 챗봇 답변 생성, 그리고 답변 로그 저장 흐름을 통합적으로 캡슐화
   - **AWS VPC + Bastion 환경 구성**을 통한 인프라 보안 강화
 
 - **운영 자동화 및 모니터링 체계 확립**  
