@@ -13,12 +13,12 @@ function Main() {
         <div className="content">
           <div className="social_icons">
             <a href="https://github.com/junseokhub" target="_blank" rel="noreferrer"><GitHubIcon/></a>
-            <a href="https://junseokoo.tistory.com/" target="_blank" rel="noreferrer">
+            {/* <a href="https://junseokoo.tistory.com/" target="_blank" rel="noreferrer">
               <img 
                 src="https://t1.daumcdn.net/tistory_admin/favicon/tistory_favicon_32x32.ico" 
                 alt="Tistory" 
               />
-            </a>
+            </a> */}
           </div>
           <h1>오준석</h1>
           <p>Backend Developer</p>
@@ -39,12 +39,12 @@ function Main() {
 
           <div className="mobile_social_icons">
             <a href="https://github.com/junseokhub" target="_blank" rel="noreferrer"><GitHubIcon/></a>
-            <a href="https://junseokoo.tistory.com/" target="_blank" rel="noreferrer">
+            {/* <a href="https://junseokoo.tistory.com/" target="_blank" rel="noreferrer">
               <img 
                 src="https://t1.daumcdn.net/tistory_admin/favicon/tistory_favicon_32x32.ico" 
                 alt="Tistory" 
               />
-            </a>
+            </a> */}
           </div>
         </div>
       </div>
