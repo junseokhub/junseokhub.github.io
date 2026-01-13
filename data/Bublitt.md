@@ -27,7 +27,8 @@ OpenAI & RAG 기반 LLM 챗봇 API와 사용자 발화에 대한 주제 추천 �
 - **플랫폼 및 아키텍처 고도화**  
   -  백엔드 프레임워크를 **NestJS(TypeORM)에서 Spring Boot(JPA)로 마이그레이션**하여 대규모 트랜잭션 처리 안정성 확보 및 보안성 강화 
   -  복합 트랜잭션 구조를 **@Transactional + 전파 레벨 세분화로 관리**, 동시성 이슈 및 락 경합 문제 해소
-  -  **CompletableFuture기반 Orchestration 패턴을 활용**하여 서비스 계층에서 벡터 검색, OpenAI 기반 챗봇 답변 생성, 사용 토큰 저장, 그리고 답변 로그 저장 흐름을 통합적으로 캡슐화
+  -  CompletableFuture 기반 비동기 체인을 통해 검색(Vector), 생성(LLM), 빌링(Token), 로깅을 오케스트레이션하여 챗봇 응답 지연 최소화
+  -  서비스 계층 간 의존성을 제거하고, Reactive Stack(WebFlux) 전환을 염두에 둔 논리적 계층 분리 및 캡슐화
   - **AWS VPC + Bastion 환경 구성**을 통한 인프라 보안 강화
 
 - **운영 자동화 및 모니터링 체계 확립**  
@@ -70,7 +71,8 @@ OpenAI & RAG 기반 LLM 챗봇 API와 사용자 발화에 대한 주제 추천 �
   - 클러스터링 자동화 → **사용자 편의성 및 활용률 향상**.
 
 - 비동기 처리 
-  - Embedding, Vector Search 등 **I/O 병목은 기존 CompletableFuture에서 점진적으로 Mono (Spring WebFlux)로 병렬화**, 통계/로그/알림 같은 **비동기 후처리는 Kafka/Redis 이벤트 큐 기반**으로 처리하여 확장성과 응답 성능을 모두 확보.
+  - Embedding, Vector Search 등 **I/O 병목은 기존 CompletableFuture에서 점진적으로 Mono (Spring WebFlux)로 병렬화** 예정.
+  - 통계/로그/알림 같은 **비동기 후처리는 Kafka/Redis 이벤트 큐 기반**으로 처리하여 확장성과 응답 성능을 모두 확보 예정.
 ---
 
 ### 🔁 **CI/CD 구조 개선 핵심**
