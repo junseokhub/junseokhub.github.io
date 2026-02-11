@@ -17,6 +17,9 @@ const labelsSecond = [
     "Jenkins",
     "Tekton",
     "Argocd",
+    "Prometheus",
+    "Nginx",
+    "Kafka",
     "AWS",
     "Linux",
     "Git",
@@ -24,7 +27,7 @@ const labelsSecond = [
 
 const labelsThird = [
     "MySQL",
-    "Oracle",
+    "OracleDB",
     "Redis",
     "MongoDB",
     "Milvus",
