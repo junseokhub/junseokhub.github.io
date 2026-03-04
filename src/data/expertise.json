@@ -1,6 +1,6 @@
 [
   {
-    "title": "Backend Development",
+    "title": "BackEnd Development",
     "description": "Spring과 Nest.js를 활용하여 다양한 애플리케이션을 설계하고 구축한 경험이 있습니다. 또한 Next.js와 React.js 운영 환경에서 웹 애플리케이션을 유지보수한 경험도 보유하고 있습니다.",
     "techStack": ["Java", "Spring", "TypeScript", "Nest.js", "JavaScript", "Express.js"]
   },

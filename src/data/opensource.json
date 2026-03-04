@@ -2,9 +2,10 @@
   {
     "title": "trainfinder",
     "description": [
-      "Npm Library",
-     "기차 예매할 때 매번 로그인해서 열차 확인하거나 휴대폰으로 확인하기가 번거로워서 개발",
-     "간편하게 CLI로 열차 시간 조회 가능"
+      "npm Library",
+      "열차 조회 할 때 매번 페이지를 들어가거나 휴대폰으로 확인하기 번거로워 개발",
+      "간편하게 CLI로 열차 시간 조회 가능",
+      "누적 1100회 이상 다운로드"
     ],
     "tags": ["#Node.js", "#npm", "#CLI", "#Library"],
     "link": "https://www.npmjs.com/package/trainfinder"

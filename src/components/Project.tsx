@@ -5,6 +5,7 @@ import projectData from "../data/project.json";
 
 interface ProjectItem {
   name: string;
+  role: string; 
   duration: string;
   content: string;
   link?: string;
@@ -29,6 +30,7 @@ function Project() {
         >
           Projects
         </Typography>
+        
 
         <Grid container spacing={4} alignItems="stretch">
           {projectData.map((item: ProjectItem, index) => (
@@ -52,20 +54,54 @@ function Project() {
                   }
                 }}
               >
-                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                    <FolderOpenIcon sx={{ color: "#a370f7" }} />
-                    <Typography variant="h5" fontWeight="700">
-                      {item.name}
+            <Box
+              sx={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                mb: 2
+              }}
+            >
+              <Box sx={{ display: "flex", gap: 1.5 }}>
+                <FolderOpenIcon sx={{ color: "#a370f7", mt: "4px" }} />
+
+                <Box sx={{ display: "flex", flexDirection: "column" }}>
+                  <Typography variant="h6" fontWeight="bold">
+                    {item.name}
+                  </Typography>
+
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mt: 0.5 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{ color: "text.secondary", fontWeight: 600 }}
+                    >
+                      {item.role}
+                    </Typography>
+
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "#a370f7",
+                        px: 1,
+                        py: 0.2,
+                      }}
+                    >
+                      {item.duration}
                     </Typography>
                   </Box>
-                  
+                </Box>
+              </Box>
+
                   {item.link && (
                     <Link
                       href={item.link}
                       target="_blank"
                       rel="noopener noreferrer"
-                      sx={{ color: "text.disabled", "&:hover": { color: "#a370f7" } }}
+                      sx={{
+                        color: "text.disabled",
+                        mt: "2px",
+                        "&:hover": { color: "#a370f7" }
+                      }}
                     >
                       <LaunchIcon sx={{ fontSize: 20 }} />
                     </Link>
@@ -77,19 +113,7 @@ function Project() {
                     <ListItemText 
                       primary={
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                          <Typography 
-                            variant="caption"
-                            sx={{ 
-                              alignSelf: 'flex-start',
-                              color: "#a370f7", 
-                              bgcolor: (theme) => theme.palette.mode === 'dark' ? "rgba(163, 112, 247, 0.1)" : "rgba(163, 112, 247, 0.05)",
-                              px: 1,
-                              py: 0.2,
-                              borderRadius: 3
-                            }}
-                          >
-                            {item.duration}
-                          </Typography>
+        
                           
                           <Typography 
                             variant="body2" 

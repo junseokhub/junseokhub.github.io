@@ -22,7 +22,7 @@ function Main() {
             </a> */}
           </div>
           <h1>오준석</h1>
-          <p>Backend Developer</p>
+          <p>BackEnd Developer</p>
           <br></br>
           <p style={{ fontSize: "20px" }}>
             Phone: {" "}
