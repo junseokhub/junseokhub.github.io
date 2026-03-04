@@ -1,0 +1,44 @@
+[
+  {
+    "title": "모듈 개발 & 파이프라인 구축",
+    "iconKey": "managing",
+    "items": [
+      { "content": "UTC 기반 채팅 로그를 KST 기준으로 자동 분류/재배치하는 모듈 개발", "duration": "2023.12 ~ 2024.02" },
+      { "content": "LLM 모델 성능을 차원별로 평가할 수 있는 테스트 모듈 개발", "duration": "2024.03 ~ 2024.04" },
+      { "content": "자연어 처리 및 벡터화 기반 주제 추천 / 유사도 검색 모듈 개발" , "duration": "2023.12 ~ 2024.08" },
+      { "content": "PDF / 크롤링 데이터 텍스트 추출 및 임베딩 파이프라인 구축", "duration": "2023.12 ~ 2024.08"}
+    ]
+  },
+  {
+    "title": "코드 리팩토링 & 마이그레이션",
+    "iconKey": "legacy",
+    "items": [
+      { "content": "Nest.js(TypeORM) -> SpringBoot(JPA) 마이그레이션", "duration": "2024.12 ~ 2025.05" },
+      { "content": "RawQuery -> TypeORM (QueryBuilder) 70% 이상 전환", "duration": "2023.08 ~ 2023.12" },
+      { "content": "운영 업무에서 중복 함수 및 복잡 조건문 제거를 통한 레거시 코드 구조 개선", "duration": "2022.10 ~ 2023.08" },
+      { "content": "LLM 기반 구조로 통계 시스템 아키텍처 재설계", "duration": "2024.10 ~ 2025.05" }
+    ]
+  },
+  {
+    "title": "데이터 처리 & 성능 개선",
+    "iconKey": "performance",
+    "items": [
+      { "content": "Vector Search + LLM + Token 과금 + Logging 비동기 체인 구성 \n -> 응답 지연 시간 30% 개선", "duration": "2024.02 ~ 2024.08" },
+      { "content": "RAG(Solar) + Rerank 적용 \n -> 재질문율 38% → 21% 감소 \n -> Fallback 비율 24% → 8% 감소", "duration": "2024.02 ~ 2024.08 "},
+      { "content": "Spring Batch / Scheduler 기반 통계 데이터 자동화", "duration": "2024.12 ~ 2025.05" },
+      { "content": "챗봇 민원 접수 데이터를 Google Sheets에 실시간 자동 적재하고, 트래픽 급증에 대비해 비동기 처리 및 재시도 로직을 적용하여 데이터 유실 및 API 병목 방지", "duration": "2023.04 ~ 2023.09" }
+    ]
+  },
+  {
+    "title": "인프라 운영 관리",
+    "iconKey": "infrastructure",
+    "items": [
+      { "content": "사내 서버에 자체 Ubuntu 환경 구축 및 운영", "duration": "2024.01 ~ 2025.05" },
+      { "content": "Kubernetes + Docker 기반 컨테이너 환경 구축", "duration": "2024.10 ~ 2025.05" },
+      { "content": "Prometheus + Grafana 기반 모니터링 및 알림 체계 확립", "duration": "2024.10 ~ 2025.05" },
+      { "content": "AWS Lambda 상품 API 자동화 / Cognito 기반 관리자 인증 강화", "duration": "2022.04 ~ 2022.07" },
+      { "content": "Jenkins / ArgoCD / Helm 연동 CI/CD 파이프라인 구축", "duration": "2022.04 ~ 2022.07" },
+      { "content": "AWS VPC 내부망 구성 및 Bastion Host 기반 접근 제어", "duration": "2023.05 ~ 2023.06" }
+    ]
+  }
+]
