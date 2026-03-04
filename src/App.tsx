@@ -4,12 +4,12 @@ import { darkTheme, lightTheme } from "../theme";
 
 import {
   Main,
-  Timeline,
+  Experience,
   Expertise,
   Contact,
   About,
-  Navigation,
   Footer,
+  Navigation,
   Competency,
 } from "./components";
 import FadeIn from "./components/FadeIn";
@@ -38,7 +38,7 @@ function App() {
                 <Main/>
                 <About/>
                 <Expertise/>
-                <Timeline/>
+                <Experience/>
                 <Competency/>
                 <Project/>
                 <OpenSource/>
