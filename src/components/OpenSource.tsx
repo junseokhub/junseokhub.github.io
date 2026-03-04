@@ -38,29 +38,19 @@ function OpenSource() {
                 elevation={0}
                 sx={{
                   p: 4,
-                  height: "100%",
+                  width: "100%",
                   borderRadius: 4,
-                  bgcolor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(255, 255, 255, 0.03)"
-                      : "rgba(0, 0, 0, 0.03)",
-                  border: (theme) =>
-                    `1px solid ${
-                      theme.palette.mode === "dark"
-                        ? "rgba(255, 255, 255, 0.1)"
-                        : "rgba(0, 0, 0, 0.1)"
-                    }`,
+                  bgcolor: (theme) => theme.palette.mode === 'dark' ? "rgba(255, 255, 255, 0.03)" : "#fdfdfd",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  transition: "0.3s",
                   display: "flex",
                   flexDirection: "column",
-                  transition: "0.3s",
-                  "&:hover": {
-                    transform: "translateY(-8px)",
-                    boxShadow: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "0 8px 24px rgba(0,0,0,0.5)"
-                        : 4,
-                    borderColor: "#a370f7",
-                  },
+                  "&:hover": { 
+                    transform: "translateY(-8px)", 
+                    boxShadow: (theme) => theme.palette.mode === 'dark' ? "0 8px 24px rgba(0,0,0,0.5)" : 4,
+                    borderColor: "#a370f7"
+                  }
                 }}
               >
                 <Box
