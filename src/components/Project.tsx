@@ -59,7 +59,7 @@ function Project() {
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "flex-start",
-                mb: 2
+                mb: 1
               }}
             >
               <Box sx={{ display: "flex", gap: 1.5 }}>
@@ -69,29 +69,8 @@ function Project() {
                   <Typography variant="h6" fontWeight="bold">
                     {item.name}
                   </Typography>
-
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mt: 0.5 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ color: "text.secondary", fontWeight: 600 }}
-                    >
-                      {item.role}
-                    </Typography>
-
-                    <Typography
-                      variant="caption"
-                      sx={{
-                        color: "#a370f7",
-                        px: 1,
-                        py: 0.2,
-                      }}
-                    >
-                      {item.duration}
-                    </Typography>
-                  </Box>
                 </Box>
               </Box>
-
                   {item.link && (
                     <Link
                       href={item.link}
@@ -108,12 +87,31 @@ function Project() {
                   )}
                 </Box>
 
-                <List disablePadding sx={{ flexGrow: 1 }}>
+
+                <List disablePadding>
                   <ListItem disableGutters sx={{ alignItems: "flex-start", py: 0.5 }}>
                     <ListItemText 
                       primary={
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1}}>
+                          <Box sx={{ display: "flex", alignItems: "center" }}>
+                              <Typography
+                                variant="body2"
+                                sx={{ color: "text.secondary", fontWeight: 600 }}
+                              >
+                                {item.role}
+                              </Typography>
+
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: "#a370f7",
+                                  px: 1,
+                                  py: 0.2,
+                                }}
+                              >
+                                {item.duration}
+                              </Typography>
+                            </Box>
                           
                           <Typography 
                             variant="body2" 
