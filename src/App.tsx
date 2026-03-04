@@ -15,6 +15,7 @@ import {
 import FadeIn from "./components/FadeIn";
 import "./index.scss";
 import OpenSource from "./components/OpenSource";
+import Project from "./components/Project";
 
 function App() {
     const [mode, setMode] = useState<string>("dark");
@@ -39,8 +40,9 @@ function App() {
                 <Expertise/>
                 <Timeline/>
                 <Competency/>
+                <Project/>
                 <OpenSource/>
-                <Contact/>
+                {/* <Contact/> */}
             </FadeIn>
             <Footer />
         </div>

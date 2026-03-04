@@ -40,7 +40,7 @@ function Main() {
           
           <Button
             component="a"
-            href="/portfolio.pdf"
+            href="/오준석(포트폴리오).pdf"
             download
             variant="outlined"
             sx={{
@@ -60,12 +60,6 @@ function Main() {
 
           <div className="mobile_social_icons">
             <a href="https://github.com/junseokhub" target="_blank" rel="noreferrer"><GitHubIcon/></a>
-            {/* <a href="https://junseokoo.tistory.com/" target="_blank" rel="noreferrer">
-              <img 
-                src="https://t1.daumcdn.net/tistory_admin/favicon/tistory_favicon_32x32.ico" 
-                alt="Tistory" 
-              />
-            </a> */}
           </div>
         </div>
       </div>

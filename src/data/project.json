@@ -1,0 +1,38 @@
+[
+  {
+    "name": "Bublitt",
+    "duration": "2023.09 ~ 2023.05",
+    "content": "자연어 처리 및 벡터화 기반 주제 추천 시스템 구축. OpenAI 기반 RAG 시스템을 도입한 LLM 챗봇",
+    "link": "https://bublitt.com"
+  },
+  {
+    "name": "Coconutive",
+    "duration": "2023.10 ~ 2024.12",
+    "content": "챗봇 통계 솔루션으로 LLM 기반 대화 데이터를 분석하고 시각화하여 운영 인사이트를 제공",
+    "link": "https://coconutive.com"
+  },
+  {
+    "name": "식약처 코스봇",
+    "duration": "2024.05 ~ 2025.05",
+    "content": "Upstage와 협업하여 RAG(Solar) 기반 챗봇 제공, 자체 통계 로직을 구현하여 사용자에게 필요한 데이터를 제공",
+    "link": "http://aiconsulting.helpcosmetic.or.kr/"
+  },
+  {
+    "name": "SK-EcoPlant 사내 챗봇",
+    "duration": "2023.04 ~ 2025.05",
+    "content": "불편 접수 및 사내 정보 제공 챗봇 구축",
+    "link": ""
+  },
+  {
+    "name": "신세계 면세점 상담톡",
+    "duration": "2023.03 ~ 2023.08",
+    "content": "신세계 면세점 챗봇 운영 및 유지보수 업무",
+    "link": "https://www.ssgdfs.com/kr/main/initMain"
+  },
+  {
+    "name": "삼성닷컴 챗봇",
+    "duration": "2022.04 ~ 2023.06",
+    "content": "삼성닷컴 챗봇 운영 및 유지보수 업무, 신규 개발",
+    "link": ""
+  }
+]
