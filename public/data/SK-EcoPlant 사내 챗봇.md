@@ -5,7 +5,7 @@
 ---
 
 ### ⚙️ 사용 기술 스택
-**BackEnd** : Nest.js, TypeORM
+**BackEnd** : Nest.js, TypeORM, GoogleDialogFlowES
 
 **Infra** : AWS(CloudFront, EC2, LoadBalancer, S3), Jenkins, Docker
 
