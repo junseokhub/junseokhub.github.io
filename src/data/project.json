@@ -3,28 +3,28 @@
     "name": "Bublitt",
     "role": "백엔드 개발 및 인프라",
     "duration": "2023.09 ~ 2023.05",
-    "content": "자연어 처리 및 벡터화 기반 주제 추천 시스템 구축. OpenAI 기반 RAG 시스템을 도입한 LLM 챗봇",
+    "content": "자연어 처리 및 벡터화 기반 주제 추천 시스템 구축 \n OpenAI 기반 RAG 시스템을 도입한 LLM 챗봇",
     "link": "https://bublitt.com"
   },
   {
     "name": "coconutive",
     "role": "백엔드 개발",
     "duration": "2023.10 ~ 2024.12",
-    "content": "챗봇 통계 솔루션으로 LLM 기반 대화 데이터를 분석하고 시각화하여 운영 인사이트를 제공",
+    "content": "LLM 기반 대화 데이터를 분석하고 시각화하여 운영 인사이트를 제공해주는 챗봇 솔루션",
     "link": "https://coconutive.com"
   },
   {
     "name": "식약처 코스봇",
     "role": "백엔드 개발 및 인프라",
     "duration": "2024.05 ~ 2025.05",
-    "content": "Upstage와 협업하여 RAG(Solar) 기반 챗봇 제공, 자체 통계 로직을 구현하여 사용자에게 필요한 데이터를 제공",
+    "content": "자체 통계 로직을 구현하여 사용자에게 필요한 데이터를 제공하며, Upstage와 협업한 RAG(Solar) 기반 챗봇",
     "link": "http://aiconsulting.helpcosmetic.or.kr/"
   },
   {
     "name": "SK-EcoPlant 사내 챗봇",
     "role": "백엔드 개발 및 인프라",
     "duration": "2023.04 ~ 2025.05",
-    "content": "불편 접수 및 사내 정보 제공 챗봇 구축",
+    "content": "불편 접수 및 사내 정보 제공 챗봇",
     "link": ""
   },
   {

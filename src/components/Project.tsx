@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { 
-  Container, Typography, Box, Paper, Grid, Link, Pagination 
+  Container, Typography, Box, Paper, Grid, Link, Pagination, 
+  Tooltip
 } from "@mui/material";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import LaunchIcon from "@mui/icons-material/Launch";
@@ -54,8 +55,10 @@ function Project() {
               <Paper
                 elevation={0}
                 sx={{
-                  p: 4,
+                  p: 3,
                   width: "100%",
+                  height: "100%",
+                  minHeight: "240px",
                   display: "flex",
                   flexDirection: "column",
                   justifyContent: "space-between", 
@@ -64,7 +67,6 @@ function Project() {
                   border: "1px solid",
                   borderColor: "divider",
                   transition: "0.3s",
-                  minHeight: "280px", 
                   "&:hover": { 
                     transform: "translateY(-8px)", 
                     boxShadow: (theme) => theme.palette.mode === 'dark' ? "0 8px 24px rgba(0,0,0,0.5)" : 4,
@@ -78,7 +80,7 @@ function Project() {
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "flex-start",
-                      mb: 2
+                      mb: 1
                     }}
                   >
                     <Box sx={{ display: "flex", gap: 1.5 }}>
@@ -102,7 +104,7 @@ function Project() {
                     )}
                   </Box>
 
-                  <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                       <Typography
                         variant="body2"
@@ -117,13 +119,14 @@ function Project() {
                         {item.duration}
                       </Typography>
                     </Box>
-                    
-                    <Typography 
-                      variant="body2" 
-                      sx={{ 
-                        color: "text.secondary", 
-                        whiteSpace: "pre-line", 
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: "text.secondary",
                         lineHeight: 1.7,
+                        whiteSpace: "pre-line",
+                        wordBreak: "break-word",
+                        overflowWrap: "break-word"
                       }}
                     >
                       {item.content}
