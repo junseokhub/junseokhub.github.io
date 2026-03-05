@@ -135,7 +135,6 @@ function Project() {
           ))}
         </Grid>
 
-        {/* --- 데이터가 6개 이하(즉, 1페이지 뿐일 때) 숨김 처리 --- */}
         {pageCount > 1 && (
           <Box sx={{ mt: 8, display: 'flex', justifyContent: 'center' }}>
             <Pagination 
