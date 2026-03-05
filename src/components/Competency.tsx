@@ -34,14 +34,19 @@ function Competency() {
           Competency
         </Typography>
 
-        <Grid container spacing={4}>
+        <Grid container spacing={4} alignItems="stretch">
           {competenciesData.map((group, index) => (
-            <Grid  size={{ xs: 12, md: 6}} key={index}>
+            <Grid 
+              size={{ xs: 12, md: 6 }}
+              key={index}
+              sx={{ display: "flex" }}
+            >
               <Paper
                 elevation={0}
                 sx={{
                   p: 4, 
-                  height: "450px",
+                  width: "100%",
+                  height: "100%",
                   borderRadius: 4,
                   bgcolor: (theme) => theme.palette.mode === 'dark' ? "rgba(255, 255, 255, 0.03)" : "#fdfdfd",
                   border: "1px solid",
@@ -49,14 +54,10 @@ function Competency() {
                   transition: "0.3s",
                   display: "flex",
                   flexDirection: "column",
-                  scrollbarGutter: "stable",
                   "&:hover": { 
                     transform: "translateY(-5px)",
                     boxShadow: (theme) => theme.palette.mode === 'dark' ? "0 8px 24px rgba(0,0,0,0.5)" : 4,
                     borderColor: "#a370f7",
-                    "& .scrollbar-area::-webkit-scrollbar-thumb": {
-                      backgroundColor: "rgba(163, 112, 247, 0.4)", 
-                    }
                   }
                 }}
               >
@@ -66,58 +67,25 @@ function Competency() {
                     {group.title}
                   </Typography>
                 </Box>
-
-                <Box 
-                  className="scrollbar-area"
-                  sx={{ 
-                    flexGrow: 1, 
-                    overflowY: "auto",
-                    pr: 1,
-                    "&::-webkit-scrollbar": { 
-                      width: "5px" 
-                    },
-                    "&::-webkit-scrollbar-thumb": {
-                      backgroundColor: "transparent", 
-                      borderRadius: "10px",
-                      transition: "background-color 0.3s",
-                    },
-                    "&::-webkit-scrollbar-track": {
-                      backgroundColor: "transparent",
-                    }
-                  }}
-                >
-                  <List disablePadding>
-                    {group.items.map((item, idx) => (
-                      <ListItem key={idx} disableGutters sx={{ alignItems: "flex-start", py: 1 }}>
-                        <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
-                          <CheckCircleOutlineIcon sx={{ fontSize: 18, color: "text.disabled" }} />
-                        </ListItemIcon>
-                        <ListItemText 
-                          primary={
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-                              <Typography variant="body1" sx={{ color: "text.secondary", fontWeight: 500 }}>
-                                {item.content}
-                              </Typography>
-                              {item.duration && (
-                                <Typography 
-                                  sx={{ 
-                                    fontSize: "0.75rem", 
-                                    fontWeight: 700,
-                                    color: "#a370f7", 
-                                    bgcolor: (theme) => theme.palette.mode === 'dark' ? "rgba(163, 112, 247, 0.1)" : "rgba(163, 112, 247, 0.05)",
-                                    px: 1, py: 0.3, borderRadius: 1
-                                  }}
-                                >
-                                  {item.duration}
-                                </Typography>
-                              )}
-                            </Box>
-                          }
-                        />
-                      </ListItem>
-                    ))}
-                  </List>
-                </Box>
+                
+                <List disablePadding>
+                  {group.items.map((item, idx) => (
+                    <ListItem key={idx} disableGutters sx={{ alignItems: "flex-start", py: 0.7 }}>
+                      <ListItemIcon sx={{ minWidth: 32, mt: 0.7 }}>
+                        <CheckCircleOutlineIcon sx={{ fontSize: 18, color: "text.disabled" }} />
+                      </ListItemIcon>
+                      <ListItemText 
+                        primary={
+                          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <Typography variant="body1" sx={{ color: "text.secondary", whiteSpace: "pre-line" }}>
+                              {item.content}
+                            </Typography>
+                          </Box>
+                        }
+                      />
+                    </ListItem>
+                  ))}
+                </List>
               </Paper>
             </Grid>
           ))}

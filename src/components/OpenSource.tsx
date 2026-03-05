@@ -127,7 +127,7 @@ function OpenSource() {
                         sx={{
                           fontSize: 16,
                           mr: 1.2,
-                          mt: "4px",
+                          mt: 0.5,
                           color: "text.disabled",
                         }}
                       />
