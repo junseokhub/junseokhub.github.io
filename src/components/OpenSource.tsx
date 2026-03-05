@@ -1,4 +1,5 @@
-import { Container, Typography, Box, Paper, Grid, Link } from "@mui/material";
+import { useState } from "react";
+import { Container, Typography, Box, Paper, Grid, Link, Pagination } from "@mui/material";
 import IntegrationInstructionsIcon from "@mui/icons-material/IntegrationInstructions";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import LaunchIcon from "@mui/icons-material/Launch";
@@ -12,6 +13,20 @@ interface OpenSourceItem {
 }
 
 function OpenSource() {
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 3; 
+  const pageCount = Math.ceil(opensourceData.length / itemsPerPage);
+
+  const handleChange = (_: React.ChangeEvent<unknown>, value: number) => {
+    setPage(value);
+    document.getElementById("opensource")?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const displayedData = opensourceData.slice(
+    (page - 1) * itemsPerPage,
+    page * itemsPerPage
+  );
+
   return (
     <Box id="opensource" component="section" sx={{ width: "100%" }}>
       <Container
@@ -32,25 +47,33 @@ function OpenSource() {
         </Typography>
 
         <Grid container spacing={{ xs: 4, md: 5 }}>
-          {opensourceData.map((item: OpenSourceItem, index) => (
-            <Grid size={{ xs: 12, md: 4 }} key={index}>
+          {displayedData.map((item: OpenSourceItem, index) => (
+            <Grid size={{ xs: 12, md: 4 }}  key={index} sx={{ display: "flex" }}>
               <Paper
                 elevation={0}
                 sx={{
                   p: 4,
                   width: "100%",
                   borderRadius: 4,
-                  bgcolor: (theme) => theme.palette.mode === 'dark' ? "rgba(255, 255, 255, 0.03)" : "#fdfdfd",
+                  bgcolor: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? "rgba(255, 255, 255, 0.03)"
+                      : "#fdfdfd",
                   border: "1px solid",
                   borderColor: "divider",
                   transition: "0.3s",
                   display: "flex",
                   flexDirection: "column",
-                  "&:hover": { 
-                    transform: "translateY(-8px)", 
-                    boxShadow: (theme) => theme.palette.mode === 'dark' ? "0 8px 24px rgba(0,0,0,0.5)" : 4,
-                    borderColor: "#a370f7"
-                  }
+                  height: "100%",
+                  minHeight: "350px", 
+                  "&:hover": {
+                    transform: "translateY(-8px)",
+                    boxShadow: (theme) =>
+                      theme.palette.mode === "dark"
+                        ? "0 8px 24px rgba(0,0,0,0.5)"
+                        : 4,
+                    borderColor: "#a370f7",
+                  },
                 }}
               >
                 <Box
@@ -132,7 +155,7 @@ function OpenSource() {
                         variant="caption"
                         sx={{ color: "#a370f7", fontWeight: "bold" }}
                       >
-                        {tag}
+                        #{tag}
                       </Typography>
                     ))}
                   </Box>
@@ -141,6 +164,27 @@ function OpenSource() {
             </Grid>
           ))}
         </Grid>
+
+        {pageCount > 1 && (
+          <Box sx={{ mt: 8, display: "flex", justifyContent: "center" }}>
+            <Pagination
+              count={pageCount}
+              page={page}
+              onChange={handleChange}
+              color="secondary"
+              sx={{
+                "& .MuiPaginationItem-root": {
+                  color: "text.secondary",
+                  "&.Mui-selected": {
+                    bgcolor: "#a370f7",
+                    color: "#fff",
+                    "&:hover": { bgcolor: "#8b56e0" },
+                  },
+                },
+              }}
+            />
+          </Box>
+        )}
       </Container>
     </Box>
   );

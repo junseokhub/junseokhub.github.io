@@ -9,10 +9,10 @@ import type { ReactElement } from "react";
 
 function Competency() {
   const ICON_MAP: Record<string, ReactElement> = {
-    managing: <StarsIcon color="primary" />,
-    legacy: <EngineeringIcon color="secondary" />,
-    performance: <TerminalIcon color="success" />,
-    infrastructure: <CloudQueueIcon color="info" />,
+    managing: <StarsIcon sx={{ fontSize: 28 }} color="primary" />,
+    legacy: <EngineeringIcon sx={{ fontSize: 28 }} color="secondary" />,
+    performance: <TerminalIcon sx={{ fontSize: 28 }} color="success" />,
+    infrastructure: <CloudQueueIcon sx={{ fontSize: 28 }} color="info" />,
   };
 
   return (
@@ -36,72 +36,88 @@ function Competency() {
 
         <Grid container spacing={4}>
           {competenciesData.map((group, index) => (
-            <Grid size={{ xs: 12, md: 6 }} key={index}>
+            <Grid  size={{ xs: 12, md: 6}} key={index}>
               <Paper
                 elevation={0}
                 sx={{
-                  p: 4,
-                  height: "100%",
+                  p: 4, 
+                  height: "450px",
                   borderRadius: 4,
                   bgcolor: (theme) => theme.palette.mode === 'dark' ? "rgba(255, 255, 255, 0.03)" : "#fdfdfd",
                   border: "1px solid",
                   borderColor: "divider",
                   transition: "0.3s",
+                  display: "flex",
+                  flexDirection: "column",
+                  scrollbarGutter: "stable",
                   "&:hover": { 
-                    transform: "translateY(-8px)", 
+                    transform: "translateY(-5px)",
                     boxShadow: (theme) => theme.palette.mode === 'dark' ? "0 8px 24px rgba(0,0,0,0.5)" : 4,
-                    borderColor: "#a370f7"
+                    borderColor: "#a370f7",
+                    "& .scrollbar-area::-webkit-scrollbar-thumb": {
+                      backgroundColor: "rgba(163, 112, 247, 0.4)", 
+                    }
                   }
                 }}
               >
-                <Box sx={{ display: "flex", alignItems: "center", mb: 2, gap: 1.5 }}>
+                <Box sx={{ display: "flex", alignItems: "center", mb: 3, gap: 2 }}>
                   {ICON_MAP[group.iconKey as keyof typeof ICON_MAP]}
-                  <Typography variant="h5" fontWeight="700" >
+                  <Typography variant="h5" fontWeight="800">
                     {group.title}
                   </Typography>
                 </Box>
-                
 
-
-               <List disablePadding>
-                {group.items.map((item, idx) => (
-                  <ListItem key={idx} disableGutters sx={{ alignItems: "flex-start", py: 0.5 }}>
-                    <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
-                      <CheckCircleOutlineIcon sx={{ fontSize: 16, color: "text.disabled" }} />
-                    </ListItemIcon>
-                    
-                    <ListItemText 
-                      primary={
-                        <Box component="span" sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}>
-                          <Typography 
-                            component="span" 
-                            variant="body2" 
-                            sx={{ color: "text.secondary", whiteSpace: "pre-line" }}
-                          >
-                            {item.content}
-                          </Typography>
-                          
-                          {item.duration && (
-                            <Typography 
-                              component="span" 
-                              sx={{ 
-                                fontSize: "0.75rem", 
-                                color: "#a370f7", 
-                                bgcolor: (theme) => theme.palette.mode === 'dark' ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.03)",
-                                px: 0.8,
-                                py: 0.2,
-                                borderRadius: 3
-                              }}
-                            >
-                              {item.duration}
-                            </Typography>
-                          )}
-                        </Box>
-                      }
-                    />
-                  </ListItem>
-                ))}
-              </List>
+                <Box 
+                  className="scrollbar-area"
+                  sx={{ 
+                    flexGrow: 1, 
+                    overflowY: "auto",
+                    pr: 1,
+                    "&::-webkit-scrollbar": { 
+                      width: "5px" 
+                    },
+                    "&::-webkit-scrollbar-thumb": {
+                      backgroundColor: "transparent", 
+                      borderRadius: "10px",
+                      transition: "background-color 0.3s",
+                    },
+                    "&::-webkit-scrollbar-track": {
+                      backgroundColor: "transparent",
+                    }
+                  }}
+                >
+                  <List disablePadding>
+                    {group.items.map((item, idx) => (
+                      <ListItem key={idx} disableGutters sx={{ alignItems: "flex-start", py: 1 }}>
+                        <ListItemIcon sx={{ minWidth: 32, mt: 0.5 }}>
+                          <CheckCircleOutlineIcon sx={{ fontSize: 18, color: "text.disabled" }} />
+                        </ListItemIcon>
+                        <ListItemText 
+                          primary={
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                              <Typography variant="body1" sx={{ color: "text.secondary", fontWeight: 500 }}>
+                                {item.content}
+                              </Typography>
+                              {item.duration && (
+                                <Typography 
+                                  sx={{ 
+                                    fontSize: "0.75rem", 
+                                    fontWeight: 700,
+                                    color: "#a370f7", 
+                                    bgcolor: (theme) => theme.palette.mode === 'dark' ? "rgba(163, 112, 247, 0.1)" : "rgba(163, 112, 247, 0.05)",
+                                    px: 1, py: 0.3, borderRadius: 1
+                                  }}
+                                >
+                                  {item.duration}
+                                </Typography>
+                              )}
+                            </Box>
+                          }
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                </Box>
               </Paper>
             </Grid>
           ))}
