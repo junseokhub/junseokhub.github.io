@@ -1,8 +1,34 @@
 import GitHubIcon from "@mui/icons-material/GitHub";
 import "../assets/styles/Main.scss";
-import { Button } from "@mui/material";
+import { Button, Dialog, DialogActions, DialogTitle, type Theme } from "@mui/material";
+import { useState } from "react";
 
 function Main() {
+  const [open, setOpen] = useState(false);
+
+  const buttonSX = (theme: Theme) => ({
+    borderRadius: "20px",
+    border: "1px solid #c9a0f7",
+    bgcolor: "transparent",
+    color: theme.palette.mode === "dark" ? "#d0b7ff" : "#a370f7",
+    transition: "all 0.2s ease",
+    "&:hover": {
+      bgcolor: "rgba(163, 112, 247, 0.25)",
+      color: theme.palette.mode === "dark" ? "#f0e6ff" : "#5000ca",
+      borderColor: "#5000ca",
+    },
+  });
+
+  const handleDownload = () => {
+    const link = document.createElement("a");
+    link.href = "/portfolio.pdf";
+    link.download = "오준석(포트폴리오).pdf";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setOpen(false);
+  };
 
   return (
     <div id="main">
@@ -40,8 +66,7 @@ function Main() {
           
           <Button
             component="a"
-            href="/오준석(포트폴리오).pdf"
-            download
+            onClick={() => setOpen(true)}
             variant="outlined"
             sx={{
               mt: 2,
@@ -57,6 +82,64 @@ function Main() {
             >
             Portfolio PDF Download
           </Button>
+          
+         <Dialog
+          open={open}
+          onClose={() => setOpen(false)}
+          slotProps={{
+            paper: {
+              sx: {
+                borderRadius: "20px",
+                border: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? "1px solid rgba(255,255,255,0.12)"
+                    : "1px solid rgba(0,0,0,0.12)",
+                bgcolor: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? "black"
+                    : "#ffffff",
+                color: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? "#ffffff"
+                    : "#555555",
+              },
+            },
+          }}
+        >
+          <DialogTitle
+            sx={{
+              fontSize: "1.1rem",
+              fontWeight: 600,
+              textAlign: "center",
+              color: (theme) =>
+                theme.palette.mode === "dark" ? "#ffffff" : "#555555",
+            }}
+          >
+            포트폴리오를 다운로드 하시겠습니까?
+          </DialogTitle>
+
+          <DialogActions
+            sx={{
+              justifyContent: "center",
+              pb: 2,
+              gap: 2,
+            }}
+          >
+            <Button
+              onClick={() => setOpen(false)}
+              sx={buttonSX}
+            >
+              아니오
+            </Button>
+
+            <Button
+              onClick={handleDownload}
+              sx={buttonSX}
+            >
+              예
+            </Button>
+          </DialogActions>
+        </Dialog>
 
           <div className="mobile_social_icons">
             <a href="https://github.com/junseokhub" target="_blank" rel="noreferrer"><GitHubIcon/></a>
