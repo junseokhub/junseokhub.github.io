@@ -38,7 +38,7 @@
       { "content": "Prometheus + Grafana 기반 모니터링 및 알림 체계 확립", "duration": "2024.10 ~ 2025.05" },
       { "content": "Docker Daemon 환경에서 rootless 모드로 변경", "duration": "2024.10 ~ 2025.05" },
       { "content": "Jenkins / ArgoCD / Helm 연동 CI/CD 파이프라인 구축", "duration": "2024.04 ~ 2022.07" },
-      { "content": "사내 서버에 자체 Ubuntu 환경 구축 및 운영", "duration": "2024.01 ~ 2025.05" },
+      { "content": "사내 서버에 자체 Ubuntu 환경 구축으로 서버비용 50% 절감", "duration": "2024.01 ~ 2025.05" },
       { "content": "AWS VPC 내부망 구성 및 Bastion Host 기반 접근 제어", "duration": "2023.05 ~ 2023.06" },
       { "content": "AWS Lambda 상품 API 자동화 / Cognito 기반 관리자 인증 강화", "duration": "2022.04 ~ 2022.07" }
     ]
