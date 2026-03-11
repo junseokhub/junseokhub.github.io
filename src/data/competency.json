@@ -25,8 +25,8 @@
     "items": [
       { "content": "멀티스레드 환경 동시성 문제를 Optimistic/Pessimistic Lock과 트랜잭션 설계, 재시도 로직으로 해결하여 데이터 정합성 확보", "duration": "2024.12 ~ 2025.05" },
       { "content": "Spring Batch / Scheduler 기반 통계 데이터 자동화", "duration": "2024.12 ~ 2025.05" },
-      { "content": "Vector Search + LLM + Token 과금 + Logging 비동기 체인 구성 \n -> 응답 지연 시간 30% 개선", "duration": "2024.02 ~ 2024.08" },
-      { "content": "RAG(Solar) + Rerank 적용 \n -> 재질문율 38% → 21% 감소 \n -> Fallback 비율 24% → 8% 감소", "duration": "2024.02 ~ 2024.08 "},
+      { "content": "Vector Search + LLM 파이프라인에서 Token 과금 및 Logging을 Kafka 기반 비동기 체인으로 분리 \n -> 응답 지연 시간 30% 개선, 서비스 결합도 감소, 재처리 기능 추가 ", "duration": "2024.02 ~ 2024.08" },
+      { "content": "RAG 아키텍처 + Rerank 적용 \n -> 재질문율 38% → 21% 감소 \n -> Fallback 비율 24% → 8% 감소", "duration": "2024.02 ~ 2024.08 "},
       { "content": "챗봇 민원 접수 데이터를 Google Sheets에 실시간 자동 적재하고, 트래픽 급증에 대비해 비동기 처리 및 재시도 로직을 적용하여 데이터 유실 및 API 병목 방지", "duration": "2023.04 ~ 2023.09" }
     ]
   },
