@@ -9,13 +9,5 @@
       "운영 업무 개발 환경 개선",
       "기존 서버 환경을 Kubernetes 기반 인프라로 전환"
     ]
-  },
-  {
-    "company": "항해99",
-    "position": "BackEnd Development",
-    "period": "2021.11 - 2022.03",
-    "descriptions": [
-      "부트캠프 수료 당시 최고 성과자로 최다 수상"
-    ]
   }
 ]
