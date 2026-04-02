@@ -2,14 +2,14 @@
   {
     "name": "Bublitt",
     "role": "백엔드 개발 및 인프라",
-    "duration": "2023.09 ~ 2023.05",
+    "duration": "2023.09 ~ 2025.05",
     "content": "자연어 처리 및 벡터화 기반 주제 추천 시스템 구축 \n OpenAI 기반 RAG 시스템을 도입한 LLM 챗봇",
     "link": "https://bublitt.com"
   },
   {
     "name": "coconutive",
     "role": "백엔드 개발",
-    "duration": "2023.10 ~ 2024.12",
+    "duration": "2023.10 ~ 2025.05",
     "content": "LLM 기반 대화 데이터를 분석하고 시각화하여 운영 인사이트를 제공해주는 챗봇 솔루션",
     "link": "https://coconutive.com"
   },
@@ -51,7 +51,7 @@
   {
     "name": "삼성닷컴 챗봇",
     "role": "풀스택 운영업무",
-    "duration": "2022.04 ~ 2023.06",
+    "duration": "2022.04 ~ 2023.08",
     "content": "삼성닷컴 챗봇 운영 및 유지보수 업무, 신규 개발",
     "link": ""
   }
