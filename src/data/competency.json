@@ -13,7 +13,7 @@
     "title": "코드 리팩토링 & 마이그레이션",
     "iconKey": "legacy",
     "items": [
-      { "content": "NestJS(TypeORM) → Spring Boot(JPA) 마이그레이션 주도, 싱글스레드에서 멀티스레드 환경 전환 시 발생한 Lost Update 문제를 충돌 빈도에 따라 Optimistic/Pessimistic Lock 구분 적용으로 해결하여 데이터 정합성 확보" },
+      { "content": "NestJS → Spring Boot 마이그레이션 주도, 멀티스레드 전환 시 발생한 Lost Update를 충돌 특성에 따라 낙관적 락과 원자적 UPDATE로 구분 적용해 해결" },
       { "content": "자연어 엔진 기반 통계 시스템 → LLM 기반으로 아키텍처 재설계, 통계 분류 자동화 및 정확도 향상" },
       { "content": "DB 종속적 Raw SQL의 유지보수 부담을 줄이기 위해 TypeORM QueryBuilder로 70%+ 전환, 복잡한 통계/집계 쿼리는 Raw SQL 유지 기준 명확화" },
       { "content": "장기 운영 프로젝트의 중복 함수·복잡 조건문 제거 및 모듈화로 신규 기능 추가 비용 절감" }
@@ -23,11 +23,12 @@
     "title": "데이터 처리 & 성능 개선",
     "iconKey": "performance",
     "items": [
-      { "content": "멀티스레드 환경에서 Token 과금·벡터 DB 업데이트 동시 요청 시 정합성 문제 발생, Optimistic Lock(민감정보 수정) + Pessimistic Lock(토큰 누적 합산) + 재시도 로직으로 해결" },
+      { "content": "멀티스레드 환경에서 Token 과금·벡터 DB 업데이트 동시 요청 시 정합성 문제 발생, 충돌 특성에 따라 낙관적 락(민감정보 수정)과 원자적 UPDATE(토큰 누적)를 구분 적용해 해결" },
+      { "content": "토큰 누적은 단순 증분이라 비관적 락이 read-modify-write를 통째로 잠가 처리량을 제한 → 원자적 UPDATE(SET token = token + ?)로 전환해 락 경합 제거 및 처리량 개선" },
       { "content": "Spring Batch + Scheduler 기반 통계 데이터 자동화 처리 시스템 구축" },
       { "content": "외부 API 순차 호출로 인한 서블릿 스레드 고갈 문제, WebFlux 전환 대신 CompletableFuture + 전용 ioExecutor 분리 및 Timeout 처리로 시스템 처리량 개선" },
       { "content": "데이터 전처리 방식 개선 + RAG 아키텍처 + ReRank 모델 도입으로 응답 정답률 65.24% → 93.71% 달성" },
-      { "content": "DBSCAN 클러스터링 기반 Fallback 데이터 분석으로 주제 추천 기능 개발, 응답 신뢰도 20% 향상" },
+      { "content": "DBSCAN 클러스터링 기반 Fallback 데이터 분석으로 주제 추천 기능 개발, Fallback 발생률 20% 감소" },
       { "content": "챗봇 민원 접수 데이터를 Google Sheets에 실시간 적재, 폴링 방식의 리소스 낭비 문제 확인 후 이벤트 기반 동기화로 전환 및 재시도 로직 적용으로 데이터 유실 방지" }
     ]
   },
@@ -39,7 +40,7 @@
       { "content": "Prometheus + Grafana 기반 컨테이너 리소스·애플리케이션 메트릭 모니터링 및 알림 체계 구축" },
       { "content": "Docker Daemon rootless 모드 전환으로 컨테이너 실행 권한 최소화 및 보안 강화" },
       { "content": "Jenkins CI(빌드·이미지 푸시) + ArgoCD CD(배포·상태 모니터링) 역할 분리로 GitOps 파이프라인 구축" },
-      { "content": "사내 온프레미스 서버 구축으로 개발·스테이징 환경을 클라우드에서 이전, 인프라 비용 50% 절감" },
+      { "content": "AWS에서 사내 온프레미스 Kubernetes로 개발·스테이징 환경을 이전해 인프라 운영 비용 약 50% 절감" },
       { "content": "AWS VPC 내부망 구성 및 Bastion Host 기반 접근 제어로 보안 환경 구축" },
       { "content": "AWS S3 + CloudFront 정적 리소스 배포 및 캐시 자동 무효화로 챗봇 SDK 배포 자동화" },
       { "content": "AWS Cognito MFA 적용으로 어드민 2단계 인증 보안 강화" }
