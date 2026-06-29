@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>오준석 | 백엔드 엔지니어</title>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BmiiTWIt.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DvIrauRv.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script data-goatcounter="https://junseokoo.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+  </body>
+</html>
