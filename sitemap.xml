@@ -16,6 +16,16 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/category/Database</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://junseokhub.github.io/blog/category/Database/NoSQL</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/category/Frameworks</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
@@ -32,7 +42,7 @@
   </url>
   <url>
     <loc>https://junseokhub.github.io/blog/post/메시지-재시도-전략</loc>
-    <lastmod>2026-07-05</lastmod>
+    <lastmod>2026-07-06</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -44,7 +54,13 @@
   </url>
   <url>
     <loc>https://junseokhub.github.io/blog/post/컨슈머-멱등성</loc>
-    <lastmod>2026-07-05</lastmod>
+    <lastmod>2026-07-06</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://junseokhub.github.io/blog/post/Redis-원자성-SET-NX-MULTIEXEC-LUA</loc>
+    <lastmod>2026-07-06</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
