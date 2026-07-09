@@ -65,6 +65,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/post/분산-락-SET-NX-Redisson-Fencing-Token</loc>
+    <lastmod>2026-07-09</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/post/Redis-키-설계-슬롯CRC16Hash-TagCROSSSLOT</loc>
     <lastmod>2026-07-08</lastmod>
     <changefreq>monthly</changefreq>
