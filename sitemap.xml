@@ -253,7 +253,7 @@
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/TestContainers-재사용-패턴-비교-상속-전역-공유-인터페이스-컴포지션</loc>
+    <loc>https://junseokhub.github.io/blog/post/TestContainers-재사용-패턴-비교</loc>
     <lastmod>2026-07-12</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
