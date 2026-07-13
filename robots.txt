@@ -1,6 +1,5 @@
 # https://www.robotstxt.org/robotstxt.html
 User-agent: *
-Disallow: /
 Allow: /blog/
 
 Sitemap: https://junseokhub.github.io/sitemap.xml
