@@ -85,6 +85,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/post/실시간-통신-방식</loc>
+    <lastmod>2026-07-13</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/post/Redis-원자성-SET-NX-MULTIEXEC-LUA</loc>
     <lastmod>2026-07-06</lastmod>
     <changefreq>monthly</changefreq>
