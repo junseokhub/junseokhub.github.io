@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://sitemaps.org">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://junseokhub.github.io/blog</loc>
     <changefreq>weekly</changefreq>
@@ -41,7 +41,7 @@
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/category/Lab/Coupon&amp;Order</loc>
+    <loc>https://junseokhub.github.io/blog/category/Lab/Coupon%26Order</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
@@ -61,13 +61,13 @@
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/헥사고날-아키텍처와-DDD</loc>
+    <loc>https://junseokhub.github.io/blog/post/%ED%97%A5%EC%82%AC%EA%B3%A0%EB%82%A0-%EC%95%84%ED%82%A4%ED%85%8D%EC%B2%98%EC%99%80-DDD</loc>
     <lastmod>2026-07-10</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/메시지-재시도-전략</loc>
+    <loc>https://junseokhub.github.io/blog/post/%EB%A9%94%EC%8B%9C%EC%A7%80-%EC%9E%AC%EC%8B%9C%EB%8F%84-%EC%A0%84%EB%9E%B5</loc>
     <lastmod>2026-07-03</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
@@ -79,193 +79,193 @@
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/컨슈머-멱등성</loc>
+    <loc>https://junseokhub.github.io/blog/post/idempotence</loc>
     <lastmod>2026-07-04</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/실시간-통신-방식</loc>
+    <loc>https://junseokhub.github.io/blog/post/%EC%8B%A4%EC%8B%9C%EA%B0%84-%ED%86%B5%EC%8B%A0-%EB%B0%A9%EC%8B%9D</loc>
     <lastmod>2026-07-13</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Redis-원자성-SET-NX-MULTIEXEC-LUA</loc>
+    <loc>https://junseokhub.github.io/blog/post/Redis-%EC%9B%90%EC%9E%90%EC%84%B1-SET-NX-MULTIEXEC-LUA</loc>
     <lastmod>2026-07-06</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/분산-락-SET-NX-Redisson-Fencing-Token</loc>
+    <loc>https://junseokhub.github.io/blog/post/%EB%B6%84%EC%82%B0-%EB%9D%BD-SET-NX-Redisson-Fencing-Token</loc>
     <lastmod>2026-07-09</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Redis-키-설계-슬롯CRC16Hash-TagCROSSSLOT</loc>
+    <loc>https://junseokhub.github.io/blog/post/Redis-%ED%82%A4-%EC%84%A4%EA%B3%84-%EC%8A%AC%EB%A1%AFCRC16Hash-TagCROSSSLOT</loc>
     <lastmod>2026-07-08</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Spring-스프링-애플리케이션-이벤트-ApplicationEventPublisher</loc>
+    <loc>https://junseokhub.github.io/blog/post/Spring-%EC%8A%A4%ED%94%84%EB%A7%81-%EC%95%A0%ED%94%8C%EB%A6%AC%EC%BC%80%EC%9D%B4%EC%85%98-%EC%9D%B4%EB%B2%A4%ED%8A%B8-ApplicationEventPublisher</loc>
     <lastmod>2026-06-20</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Spring-Gradle-MSA에서-모듈을-어떻게-해야할까</loc>
+    <loc>https://junseokhub.github.io/blog/post/Spring-Gradle-MSA%EC%97%90%EC%84%9C-%EB%AA%A8%EB%93%88%EC%9D%84-%EC%96%B4%EB%96%BB%EA%B2%8C-%ED%95%B4%EC%95%BC%ED%95%A0%EA%B9%8C</loc>
     <lastmod>2026-06-18</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-01-Spring-WebFlux로-선착순-쿠폰-발급-설계</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-01-Spring-WebFlux%EB%A1%9C-%EC%84%A0%EC%B0%A9%EC%88%9C-%EC%BF%A0%ED%8F%B0-%EB%B0%9C%EA%B8%89-%EC%84%A4%EA%B3%84</loc>
     <lastmod>2026-04-17</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-02-Spring-WebFlux-구성과-Non-blocking-아키텍처</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-02-Spring-WebFlux-%EA%B5%AC%EC%84%B1%EA%B3%BC-Non-blocking-%EC%95%84%ED%82%A4%ED%85%8D%EC%B2%98</loc>
     <lastmod>2026-04-18</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-03-Database-구성과-JWT-인증-구현</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-03-Database-%EA%B5%AC%EC%84%B1%EA%B3%BC-JWT-%EC%9D%B8%EC%A6%9D-%EA%B5%AC%ED%98%84</loc>
     <lastmod>2026-04-19</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-04-Redis-Lua-스크립트로-선착순-쿠폰-발급-구현</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-04-Redis-Lua-%EC%8A%A4%ED%81%AC%EB%A6%BD%ED%8A%B8%EB%A1%9C-%EC%84%A0%EC%B0%A9%EC%88%9C-%EC%BF%A0%ED%8F%B0-%EB%B0%9C%EA%B8%89-%EA%B5%AC%ED%98%84</loc>
     <lastmod>2026-04-20</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-05-k6-부하-테스트-결과-분석과-병목-탐색</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-05-k6-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EA%B2%B0%EA%B3%BC-%EB%B6%84%EC%84%9D%EA%B3%BC-%EB%B3%91%EB%AA%A9-%ED%83%90%EC%83%89</loc>
     <lastmod>2026-04-24</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-06-주문-API-구현과-재고-처리-방식-설계</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-06-%EC%A3%BC%EB%AC%B8-API-%EA%B5%AC%ED%98%84%EA%B3%BC-%EC%9E%AC%EA%B3%A0-%EC%B2%98%EB%A6%AC-%EB%B0%A9%EC%8B%9D-%EC%84%A4%EA%B3%84</loc>
     <lastmod>2026-04-27</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-07-재고-처리-5가지-방식-부하-테스트-비교</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-07-%EC%9E%AC%EA%B3%A0-%EC%B2%98%EB%A6%AC-5%EA%B0%80%EC%A7%80-%EB%B0%A9%EC%8B%9D-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EB%B9%84%EA%B5%90</loc>
     <lastmod>2026-04-29</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-08-Kafka-심화-파티션-전략-DLQ-Consumer-방식-비교</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-08-Kafka-%EC%8B%AC%ED%99%94-%ED%8C%8C%ED%8B%B0%EC%85%98-%EC%A0%84%EB%9E%B5-DLQ-Consumer-%EB%B0%A9%EC%8B%9D-%EB%B9%84%EA%B5%90</loc>
     <lastmod>2026-04-30</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-09-Redis-Lua-정합성-문제-해결-보상-트랜잭션-vs-Outbox-Pattern</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-09-Redis-Lua-%EC%A0%95%ED%95%A9%EC%84%B1-%EB%AC%B8%EC%A0%9C-%ED%95%B4%EA%B2%B0-%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98-vs-Outbox-Pattern</loc>
     <lastmod>2026-05-02</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/CouponOrder-10-Spring-WebFlux-vs-Spring-MVC-Virtual-Thread-부하-테스트-비교</loc>
+    <loc>https://junseokhub.github.io/blog/post/CouponOrder-10-Spring-WebFlux-vs-Spring-MVC-Virtual-Thread-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EB%B9%84%EA%B5%90</loc>
     <lastmod>2026-05-04</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-01-프로젝트-설계와-모노레포-세팅</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-01-%ED%94%84%EB%A1%9C%EC%A0%9D%ED%8A%B8-%EC%84%A4%EA%B3%84%EC%99%80-%EB%AA%A8%EB%85%B8%EB%A0%88%ED%8F%AC-%EC%84%B8%ED%8C%85</loc>
     <lastmod>2026-05-11</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-02-1-MSA-Gradle-구조-문제와-전환-과정</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-02-1-MSA-Gradle-%EA%B5%AC%EC%A1%B0-%EB%AC%B8%EC%A0%9C%EC%99%80-%EC%A0%84%ED%99%98-%EA%B3%BC%EC%A0%95</loc>
     <lastmod>2026-06-18</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-02-Gradle-멀티모듈-구조와-서비스-설정</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-02-Gradle-%EB%A9%80%ED%8B%B0%EB%AA%A8%EB%93%88-%EA%B5%AC%EC%A1%B0%EC%99%80-%EC%84%9C%EB%B9%84%EC%8A%A4-%EC%84%A4%EC%A0%95</loc>
     <lastmod>2026-05-31</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-03-GitOps-파이프라인-Helm-Chart-Jenkins-ArgoCD</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-03-GitOps-%ED%8C%8C%EC%9D%B4%ED%94%84%EB%9D%BC%EC%9D%B8-Helm-Chart-Jenkins-ArgoCD</loc>
     <lastmod>2026-06-11</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-04-인증-서비스와-이벤트-기반-유저-생성</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-04-%EC%9D%B8%EC%A6%9D-%EC%84%9C%EB%B9%84%EC%8A%A4%EC%99%80-%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EA%B8%B0%EB%B0%98-%EC%9C%A0%EC%A0%80-%EC%83%9D%EC%84%B1</loc>
     <lastmod>2026-06-16</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-05-공연-좌석-예약-결제-서비스-구현</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-05-%EA%B3%B5%EC%97%B0-%EC%A2%8C%EC%84%9D-%EC%98%88%EC%95%BD-%EA%B2%B0%EC%A0%9C-%EC%84%9C%EB%B9%84%EC%8A%A4-%EA%B5%AC%ED%98%84</loc>
     <lastmod>2026-06-17</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-06-Transactional-Outbox와-컨슈머-멱등성-처리</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-06-Transactional-Outbox%EC%99%80-%EC%BB%A8%EC%8A%88%EB%A8%B8-%EB%A9%B1%EB%93%B1%EC%84%B1-%EC%B2%98%EB%A6%AC</loc>
     <lastmod>2026-06-20</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-07-좌석-선점-고도화와-Redis-Cluster-키-설계</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-07-%EC%A2%8C%EC%84%9D-%EC%84%A0%EC%A0%90-%EA%B3%A0%EB%8F%84%ED%99%94%EC%99%80-Redis-Cluster-%ED%82%A4-%EC%84%A4%EA%B3%84</loc>
     <lastmod>2026-06-21</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-08-실시간-좌석-현황-SSE와-멀티-인스턴스-fanout</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-08-%EC%8B%A4%EC%8B%9C%EA%B0%84-%EC%A2%8C%EC%84%9D-%ED%98%84%ED%99%A9-SSE%EC%99%80-%EB%A9%80%ED%8B%B0-%EC%9D%B8%EC%8A%A4%ED%84%B4%EC%8A%A4-fanout</loc>
     <lastmod>2026-06-26</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-09-좌석-생성과-등급정원</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-09-%EC%A2%8C%EC%84%9D-%EC%83%9D%EC%84%B1%EA%B3%BC-%EB%93%B1%EA%B8%89%EC%A0%95%EC%9B%90</loc>
     <lastmod>2026-06-30</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-10-예매-결제-비즈니스-고도화</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-10-%EC%98%88%EB%A7%A4-%EA%B2%B0%EC%A0%9C-%EB%B9%84%EC%A6%88%EB%8B%88%EC%8A%A4-%EA%B3%A0%EB%8F%84%ED%99%94</loc>
     <lastmod>2026-07-02</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-11-Saga-설계-결정-Orchestration</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-11-Saga-%EC%84%A4%EA%B3%84-%EA%B2%B0%EC%A0%95-Orchestration</loc>
     <lastmod>2026-07-09</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/Seatflow-12-Saga-Orchestration-보상-트랜잭션</loc>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-12-Saga-Orchestration-%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98</loc>
     <lastmod>2026-07-11</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/TestContainers-재사용-패턴-비교</loc>
+    <loc>https://junseokhub.github.io/blog/post/TestContainers-%EC%9E%AC%EC%82%AC%EC%9A%A9-%ED%8C%A8%ED%84%B4-%EB%B9%84%EA%B5%90</loc>
     <lastmod>2026-07-12</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/post/블로그-이전</loc>
+    <loc>https://junseokhub.github.io/blog/post/%EB%B8%94%EB%A1%9C%EA%B7%B8-%EC%9D%B4%EC%A0%84</loc>
     <lastmod>2026-06-10</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
