@@ -265,6 +265,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-14-API-Gateway%EC%99%80-%EC%9D%B8%EC%A6%9D%EC%9D%B8%EA%B0%80</loc>
+    <lastmod>2026-07-18</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/post/TestContainers-%EC%9E%AC%EC%82%AC%EC%9A%A9-%ED%8C%A8%ED%84%B4-%EB%B9%84%EA%B5%90</loc>
     <lastmod>2026-07-12</lastmod>
     <changefreq>monthly</changefreq>
