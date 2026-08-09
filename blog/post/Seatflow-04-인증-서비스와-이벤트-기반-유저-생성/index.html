@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 04. 인증 서비스와 이벤트 기반 유저 생성 | Record, Then Build</title>
+    <meta name="description" content="Intro 이번 편에서는 auth-service와 user-service를 구현한다. MSA에서 인증은 단순히 로그인/로그아웃이 아니라 서비스 간 신뢰 체계를 설계하는 일이다. 어디서 토큰을 발급하고, 어떻게 검증하고, 유저 데이터는" />
+    <meta property="og:title" content="[Seatflow] 04. 인증 서비스와 이벤트 기반 유저 생성 | Record, Then Build" />
+    <meta property="og:description" content="Intro 이번 편에서는 auth-service와 user-service를 구현한다. MSA에서 인증은 단순히 로그인/로그아웃이 아니라 서비스 간 신뢰 체계를 설계하는 일이다. 어디서 토큰을 발급하고, 어떻게 검증하고, 유저 데이터는" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-04-%EC%9D%B8%EC%A6%9D-%EC%84%9C%EB%B9%84%EC%8A%A4%EC%99%80-%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EA%B8%B0%EB%B0%98-%EC%9C%A0%EC%A0%80-%EC%83%9D%EC%84%B1/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-04-%EC%9D%B8%EC%A6%9D-%EC%84%9C%EB%B9%84%EC%8A%A4%EC%99%80-%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EA%B8%B0%EB%B0%98-%EC%9C%A0%EC%A0%80-%EC%83%9D%EC%84%B1/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 04. 인증 서비스와 이벤트 기반 유저 생성</h1><p>Lab/SeatFlow · 2026-06-16</p><h1>Intro</h1>
+<p>이번 편에서는 auth-service와 user-service를 구현한다. MSA에서 인증은 단순히 로그인/로그아웃이 아니라 서비스 간 신뢰 체계를 설계하는 일이다. 어디서 토큰을 발급하고, 어떻게 검증하고, 유저 데이터는 어떤 서비스가 관리하는지?<br/>
+이 흐름을 잡는 게 핵심이다.</p>
+<hr/>
+<h1>공통 모듈 설계</h1>
+<p>서비스가 늘어날수록 중복 코드가 생긴다. Kafka 설정, 공통 응답 포맷, 예외 처리 등</p>
+<p>이걸 각 서비스에 복붙하면 변경 시 모든 서비스를 수정해야 한다. 그래서 세 개의 공통 모듈로 분리했다.</p>
+<pre><code>libs/
+ㄴ common-web/      &lt;- ApiResponse, GlobalExceptionHandler
+ㄴ common-events/   &lt;- 이벤트 스키마 (순수 POJO)
+ㄴ common-kafka/    &lt;- Kafka 설정
+</code></pre>
+<p>common-events에서 Kafka 의존성을 분리해 스키마를 순수하게 유지했다. 언어 중립 공유가 필요해지면 Schema Registry + Protobuf로 전환할 계획이다.</p>
+<p>라이브러리 모듈은 <code>@SpringBootApplication</code>의 컴포넌트 스캔 대상이 아니다. Spring Boot 3.x에서는 <code>@AutoConfiguration</code> 클래스와 <code>AutoConfiguration.imports</code> 파일로 명시적으로 등록해야 한다.</p>
+<pre><code class="language-java">@AutoConfiguration
+@Import({KafkaProducerConfig.class, KafkaConsumerConfig.class})
+public class CommonKafkaAutoConfiguration {
+}
+</code></pre>
+<pre><code># META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
+com.seatflow.common.kafka.config.CommonKafkaAutoConfiguration
+</code></pre>
+<p><code>AutoConfiguration.imports</code>에 진입점 클래스 하나만 등록하고, 나머지 Config 추가/삭제는 <code>@Import</code>로 관리한다. 나중에 Config가 추가되어도 imports 파일을 건드릴 필요가 없다. <code>spring.factories</code>는 deprecated됐다.</p>
+<hr/>
+<h1>Kafka Consumer (user-service)</h1>
+<p>user-service는 producer 역할을 하지 않는다. auth-service가 회원가입을 주도하고 이벤트를 발행하면, user-service는 이를 수신해서 유저 프로필을 생성한다.</p>
+<p>id는 UUID를 사용했다. auto increment id를 외부에 노출하면 총 유저 수와 가입 순서가 유추 가능하다. UUID는 이 문제를 차단한다.</p>
+<pre><code class="language-java">@Entity
+@Table(name = &quot;users&quot;)
+public class User {
+
+    @Id
+    private String id; // UUID
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    @Column(nullable = false)
+    private String name;
+
+    @PrePersist
+    void prePersist() {
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+}
+</code></pre>
+<p>Kafka consumer에서 제네릭 타입 <code>EventEnvelope&lt;UserRegisteredEvent&gt;</code>를 파라미터로 직접 받으면 Jackson이 런타임에 타입 정보를 소거(Type Erasure)해서 <code>payload</code>를 <code>LinkedHashMap</code>으로 역직렬화한다. <code>String</code>으로 받아 <code>TypeReference</code>로 파싱하는 방식을 적용했다.</p>
+<pre><code class="language-java">@KafkaListener(topics = EventTopic.USER_REGISTERED, groupId = &quot;user-service&quot;)
+public void consume(String message) {
+    EventEnvelope&lt;UserRegisteredEvent&gt; event = objectMapper.readValue(
+            message,
+            new TypeReference&lt;EventEnvelope&lt;UserRegisteredEvent&gt;&gt;() {}
+    );
+    userService.createUser(
+            event.payload().userId(),
+            event.payload().email(),
+            event.payload().name()
+    );
+}
+</code></pre>
+<p><code>TypeReference</code>는 제네릭 타입 정보를 런타임에 보존하기 때문에 정확한 타입으로 역직렬화가 가능하다. Kafka consumer value deserializer는 <code>StringDeserializer</code>로 설정해서 raw String을 그대로 전달받고, 파싱은 consumer에서 직접 처리한다.</p>
+<hr/>
+<h1>Kafka Producer (auth-service)</h1>
+<h2>회원가입 플로우</h2>
+<p>처음에는 user-service가 회원가입을 주도하고 auth-service로 이벤트를 발행하는 방식을 고려했다.</p>
+<p>하지만 회원가입의 핵심은 인증 정보 등록이다. 이메일, 비밀번호 해시, userId 등등 이런 것들이 먼저 만들어져야 유저 프로필도 생길 수 있다. auth-service가 주체가 되는 게 자연스럽다고 생각했다. user-service가 주체가 되면 auth-service가 user-service에 의존하게 된다. MSA에서 인증 서비스가 다른 도메인 서비스에 의존하는 구조는 좋지 않다. auth-service는 독립적으로 존재해야 한다.</p>
+<p>인증 정보(credentials)를 저장하고 <code>UserRegisteredEvent</code>를 Kafka에 발행하면, user-service가 이를 수신해서 프로필을 생성한다.</p>
+<pre><code>클라이언트 → POST /api/auth/signup
+    ㅣ
+auth-service
+    1. 이메일 중복 체크
+    2. BCrypt 해시
+    3. credentials 저장
+    4. UserRegisteredEvent → Kafka (key: userId)
+    ㅣ
+user-service (consume)
+    1. 유저 프로필 생성
+</code></pre>
+<p>인증(auth)과 프로필(user)을 분리했다. auth-service는 credentials만 관리하고, 이름이나 전화번호 같은 프로필 정보는 user-service가 담당한다.</p>
+<h2>MSA에서 Spring Security</h2>
+<p>모놀리식에서는 Spring Security가 인증, 인가, 세션 관리를 전부 담당한다. MSA에서는 역할이 달라진다. auth-service에서는 BCrypt 해시와 Stateless 설정만 사용한다. JWT 검증과 인가는 나중에 API Gateway에서 일괄 처리할 예정이다.</p>
+<pre><code class="language-java">@Bean
+public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    return http
+            .csrf(AbstractHttpConfigurer::disable)
+            .sessionManagement(session -&gt;
+                    session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -&gt; auth.anyRequest().permitAll())
+            .build();
+}
+
+@Bean
+public BCryptPasswordEncoder passwordEncoder() {
+    return new BCryptPasswordEncoder();
+}
+</code></pre>
+<p>현재는 모든 요청을 허용한다. Gateway가 붙으면 여기서 토큰 검증 필터를 추가할 예정이다.  Gateway는 뭐로 할 지 고민이다..</p>
+<p>Kong, Spring Cloud Gateway, Nginx, Envoy 등등 이 있는거로 알고있고, 추후 비교를 해보고 하나 지정해서 만들어야겠다.</p>
+<h2>JWT RS256</h2>
+<p>access token은 RS256(비대칭키)으로 서명한다. 개인키로 서명하고 공개키로 검증하기 때문에, 나중에 API Gateway나 다른 서비스에 공개키만 배포하면 auth-service 없이도 토큰 검증이 가능하다.</p>
+<pre><code class="language-java">public String generateAccessToken(String userId, String email) {
+    return Jwts.builder()
+            .subject(userId)
+            .claim(&quot;email&quot;, email)
+            .claim(&quot;type&quot;, &quot;access&quot;)
+            .issuedAt(new Date())
+            .expiration(new Date(System.currentTimeMillis() + jwtProperties.getAccessTokenExpiration()))
+            .signWith(getPrivateKey())
+            .compact();
+}
+</code></pre>
+<p>RSA 키 페어는 <code>openssl</code>로 생성하고 K8s Secret에 주입한다. <code>application.yml</code>에 키를 포함하지 않는다.</p>
+<h2>Refresh Token 전략</h2>
+<p>access token은 30분, refresh token은 7일로 설정했다. refresh token은 XSS 공격을 방어하기 위해 HttpOnly 쿠키로 전달한다.</p>
+<pre><code class="language-java">ResponseCookie refreshCookie = ResponseCookie.from(&quot;refresh_token&quot;, result.refreshToken())
+        .httpOnly(true)
+        .secure(true) // https
+        .path(&quot;/api/auth/refresh&quot;)
+        .maxAge(Duration.ofDays(7))
+        .sameSite(&quot;Strict&quot;)
+        .build();
+</code></pre>
+<p>Refresh Token Rotation을 적용했다. refresh 요청 시마다 새 refresh token을 발급하고 기존 토큰을 Redis에서 교체한다. 탈취된 토큰으로 재시도하면 Redis에 저장된 토큰과 불일치가 발생해 전체 세션을 무효화한다.</p>
+<p>부가적으로 한 계정당 Redis에 refresh token을 하나만 유지하기 때문에 중복 로그인도 자연스럽게 방지된다.</p>
+<h2>Redis 활용</h2>
+<p>기존 개인서버에 redis operator를 활용한 Redis Cluster가 구축되어있어서 이미 있는걸 활용했다.</p>
+<p>Redis는 세 가지 용도로 사용했다.</p>
+<p>Redis는 TTL도 지원하고, 인메모리에, 단순한 key-value구조라 토큰관리하기엔 좋다고 생각했다.</p>
+<p>다른 방법으로는</p>
+<p><strong>Database</strong> -  매 요청마다 DB를 조회해야하고, TTL이 필요하면 직접 관리해야 한다. (스케쥴러)</p>
+<p><strong>Memcahed</strong> - 인메모리 캐시에 TTL도 지원해서 Redis랑 유사하지만 데이터 구조가 단순해 Hash, Set같은 자료 구조를 지원하지 않는다. 기능적으로도 Redis가 더 위다.</p>
+<p><strong>JWT 자체만 사용</strong> - blacklist없이 accss token만료를 짧게 잡고, refresh token은 DB에 저장하는 방식으로 하면되는데, 일단 보안상 취약하다. 로그아웃해도 해당 토큰은 계속 사용할 수 있다.</p>
+<pre><code>refresh:{userId}      → refresh token         (TTL: 7일)
+blacklist:{token}     → 로그아웃된 access token (TTL: 남은 유효기간)
+login:fail:{email}    → 로그인 실패 횟수        (TTL: 15분)
+</code></pre>
+<p>로그아웃 시 access token을 blacklist에 등록하고, validate 요청 시 blacklist를 먼저 확인한다. 로그인 실패 5회 시 15분 잠금을 적용했다.</p>
+<pre><code class="language-java">public long incrementLoginFail(String email) {
+    Long count = redisTemplate.opsForValue().increment(LOGIN_FAIL_PREFIX + email);
+    redisTemplate.expire(LOGIN_FAIL_PREFIX + email, 15, TimeUnit.MINUTES);
+    return count == null ? 0 : count;
+}
+</code></pre>
+<hr/>
+<h1>현재 구조의 한계</h1>
+<p>지금 구현은 credentials 저장과 Kafka 발행이 하나의 트랜잭션으로 묶여있지 않다.</p>
+<p>반대로 Kafka 발행은 됐는데 user-service가 처리하다 죽으면 이벤트가 유실될 수 있다. 재시작 후 이미 처리된 이벤트가 다시 발행되면 중복 유저가 생길 수도 있다. </p>
+<p>이를 해결하기 위한 방법으로 여러가지가 있다.</p>
+<p><strong>Transactional Outbox Pattern</strong> - 이벤트를 DB에 같은 트랜잭션으로 저장하고 별도 스케줄러가 Kafka에 발생해 서버가 죽어도 재시작 후 이어서 처리가 가능하다.</p>
+<p>credentials 저장과 이벤트를 같은 트랜잭션으로 DB의 outbox 테이블에 함께 저장한다. 별도 스케줄러가 outbox 테이블을 읽어 Kafka에 발행하고, 성공하면 삭제한다. 서버가 죽어도 DB에 이벤트가 남아있기 때문에 재시작 후 이어서 처리할 수 있다. user-service에서 멱등성 처리를 추가하면 중복 발행도 방어할 수 있다.</p>
+<p><strong>Saga Pattern</strong> - 각 서비스가 이벤트로 다음 단계를 트리거하고 특정 단계가 실패하면 보상 트랜잭션(compensating transaction)을 발행해서 이전 단계를 되돌린다. 복잡한 분산 트랜잭션에 적합하지만 흐름 추적이 어렵다는 단점이 있다.</p>
+<p><strong>CDC (Change Data Capture)</strong> - Debezium 같은 툴이 DB의 binlog를 읽어서 변경 사항을 Kafka에 자동으로 발행한다. 애플리케이션 코드를 수정하지 않아도 되고, DB 변경과 이벤트 발행이 자연스럽게 연결된다. 단, 별도 인프라 구성이 필요하다.</p>
+<p>어떤 방식으로 할 지는 아직 정하지 않았지만 현재로서는 Outbox가 가장 유력하다. 하지만 난 공부가 목적이니까 블로그 7편 쯤 각 방식을 직접 비교해보고 결정할 예정이다.</p>
+<hr/>
+<h1>Next</h1>
+<ul>
+<li>show-service, seat-service, reservation-service, payment-service 도메인 구현 </li>
+<li>각 서비스들 중 필요한 서비스에 Kafka , Redis 연동 (필요시 모듈화)</li>
+</ul></article></div></div>
+  </body>
+</html>

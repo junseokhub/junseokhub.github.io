@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 02. Spring WebFlux 구성과 Non-blocking 아키텍처 | Record, Then Build</title>
+    <meta name="description" content="Intro - 1편에서 왜 WebFlux를 선택했는지 이유를 설명했다면, 이번 편에서는 WebFlux가 실제로 어떻게 동작하는지 살펴본다." />
+    <meta property="og:title" content="[Coupon&amp;Order] 02. Spring WebFlux 구성과 Non-blocking 아키텍처 | Record, Then Build" />
+    <meta property="og:description" content="Intro - 1편에서 왜 WebFlux를 선택했는지 이유를 설명했다면, 이번 편에서는 WebFlux가 실제로 어떻게 동작하는지 살펴본다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-02-Spring-WebFlux-%EA%B5%AC%EC%84%B1%EA%B3%BC-Non-blocking-%EC%95%84%ED%82%A4%ED%85%8D%EC%B2%98/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-02-Spring-WebFlux-%EA%B5%AC%EC%84%B1%EA%B3%BC-Non-blocking-%EC%95%84%ED%82%A4%ED%85%8D%EC%B2%98/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 02. Spring WebFlux 구성과 Non-blocking 아키텍처</h1><p>Lab/Coupon&amp;Order · 2026-04-18</p><h1>Intro</h1>
+<ul>
+<li>1편에서 왜 WebFlux를 선택했는지 이유를 설명했다면, 이번 편에서는 WebFlux가 실제로 어떻게 동작하는지 살펴본다.</li>
+<li>MVC와의 차이점, Reactor의 핵심 개념, 그리고 Non-blocking 체인이 어떻게 구성되는지 코드와 함께 정리한다.</li>
+</ul>
+<h1>MVC vs WebFlux</h1>
+<ul>
+<li>Spring MVC는 Thread-per-Request 모델이다. 요청이 들어오면 스레드 풀에서 스레드를 하나 꺼내 요청이 끝날 때까지 붙잡고 있는다.</li>
+</ul>
+<pre><code>요청 -&gt; 스레드 할당 -&gt; DB 조회 (대기) -&gt; 응답 -&gt; 스레드 반환
+               ↑
+        DB 응답 올 때까지 스레드가 블로킹
+</code></pre>
+<ul>
+<li>동시 요청이 수천 건이 되면 스레드 풀이 고갈되고, 새 요청은 큐에서 대기하거나 거절된다.</li>
+<li>반면 Spring WebFlux는 Event Loop 모델이다. 소수의 스레드(CPU 코어 수)로 수만 건의 요청을 처리할 수 있다.</li>
+</ul>
+<pre><code>요청 -&gt; 이벤트 루프 -&gt; DB 조회 요청 후 즉시 반환 -&gt; 다른 요청 처리
+                                    ↓
+                         DB 응답 오면 콜백으로 처리
+</code></pre>
+<ul>
+<li>I/O 대기 시간에 스레드를 낭비하지 않기 때문에 처리량이 훨씬 높다.</li>
+</ul>
+<h1>CompletableFuture</h1>
+<ul>
+<li>먼저 WebFlux 이전에도 Java에서 비동기 처리를 할 수 있는 방법이 있었다. 바로 CompletableFuture다.</li>
+</ul>
+<pre><code class="language-java">// CompletableFuture 예시
+CompletableFuture&lt;User&gt; future = CompletableFuture.supplyAsync(() -&gt; {
+  return userRepository.findById(1L); // 별도 스레드에서 실행
+});
+</code></pre>
+<pre><code class="language-java">// 변환  
+CompletableFuture&lt;UserResponse&gt; response = future.thenApply(UserResponse::from);
+
+// 체이닝  
+CompletableFuture&lt;Order&gt; order = future  
+    .thenApplyAsync(user -&gt; orderRepository.findByUserId(user.getId()))  
+    .thenApply(orders -&gt; orders.get(0));
+</code></pre>
+<ul>
+<li>Mono/Flux와 비슷해 보이지만 핵심적인 차이가 있다.
+<ul>
+<li>CompletableFuture는 스레드 풀에서 별도 스레드를 꺼내 비동기로 실행하는 방식이다. 결국 스레드를 쓰기 때문에 요청이 많아지면 스레드 풀 고갈 문제가 여전히 발생할 수 있다.</li>
+<li>반면 Reactor(Mono/Flux)는 이벤트 루프 기반으로 스레드 자체를 점유하지 않는다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-java">// CompletableFuture -&gt; 스레드 풀에서 스레드 꺼내서 실행
+CompletableFuture.supplyAsync(() -&gt; heavyTask(), threadPool);
+</code></pre>
+<pre><code class="language-java">// Mono -&gt; 이벤트 루프에서 콜백으로 처리  
+Mono.fromCallable(() -&gt; heavyTask())  
+    .subscribeOn(Schedulers.boundedElastic());
+</code></pre>
+<h2>CompletableFuture vs Mono/Flux</h2>
+<ul>
+<li>CompletableFuture와 Mono/Flux는 둘 다 비동기 처리를 한다는 점에서 비슷해 보이지만, 몇 가지 핵심적인 차이가 있다.</li>
+<li>데이터 개수
+<ul>
+<li>CompletableFuture는 단 하나의 결과만 처리할 수 있다.</li>
+<li>Flux는 0개부터 N개까지 스트림으로 처리할 수 있다.</li>
+</ul>
+</li>
+<li>취소 (Cancellation)
+<ul>
+<li>CompletableFuture는 cancel()을 호출해도 이미 실행 중인 작업을 실제로 멈추지 못하는 경우가 많다.</li>
+<li>Reactor의 Mono/Flux는 구독을 취소하면 체인 전체가 정리된다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-java">CompletableFuture&lt;User&gt; future = CompletableFuture.supplyAsync(() -&gt; {
+    return heavyTask();
+});
+
+future.cancel(true); // 실제로 멈춘다는 보장이 없음
+</code></pre>
+<ul>
+<li>백프레셔 (Backpressure)
+<ul>
+<li>소비자가 처리 가능한 만큼만 데이터를 요청하는 메커니즘</li>
+<li>CompletableFuture는 지원하지 않음</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-java">// CompletableFuture -&gt; 100만 건을 한 번에 메모리에 올림 (OOM 위험)
+CompletableFuture&lt;List&lt;User&gt;&gt; future =
+    CompletableFuture.supplyAsync(() -&gt; userRepository.findAll());
+</code></pre>
+<pre><code class="language-java">// Flux -&gt; 소비자가 처리할 수 있는 만큼만 요청
+userRepository.findAll()
+    .buffer(100)
+    .flatMap(batch -&gt; processBatch(batch))
+    .subscribe();
+</code></pre>
+<h1>Reactor(Mono와 Flux)</h1>
+<ul>
+<li>WebFlux의 핵심은 Reactor 라이브러리다. 비동기 데이터 스트림을 선언적으로 처리할 수 있다.</li>
+</ul>
+<h2>Mono</h2>
+<ul>
+<li>0 또는 1개의 데이터를 비동기로 처리한다.</li>
+</ul>
+<pre><code class="language-java">// 단건 조회
+Mono&lt;User&gt; user = userRepository.findById(1L);
+
+// 변환
+Mono&lt;UserResponse&gt; response = user.map(UserResponse::from);
+</code></pre>
+<pre><code class="language-java">// 에러 처리
+Mono&lt;User&gt; result = userRepository.findById(1L)
+    .switchIfEmpty(Mono.error(new BusinessException(ErrorCode.USER_NOT_FOUND)));
+</code></pre>
+<h2>Flux</h2>
+<ul>
+<li>0 또는 N개의 데이터를 비동기로 처리한다.</li>
+</ul>
+<pre><code class="language-java">// 전체 조회  
+Flux&lt;Coupon&gt; coupons = couponRepository.findAll();
+
+// 변환  
+Flux&lt;CouponResponse&gt; responses = coupons.map(CouponResponse::from);
+</code></pre>
+<h2>flatMap vs map</h2>
+<pre><code class="language-java">// map -&gt; 동기 변환 (값 -&gt; 값)
+Mono&lt;String&gt; name = userMono.map(user -&gt; user.getUsername());
+
+// flatMap -&gt; 비동기 변환 (값 -&gt; Mono)
+Mono&lt;Order&gt; order = userMono.flatMap(
+    user -&gt; orderRepository.findByUserId(user.getId())
+);
+</code></pre>
+<ul>
+<li>flatMap은 내부에서 또 다른 비동기 작업이 필요할 때 사용한다. Non-blocking 체인의 핵심이다.</li>
+</ul>
+<h1>Non-blocking 체인 구성</h1>
+<ul>
+<li>WebFlux에서는 여러 비동기 작업을 체인으로 연결한다.</li>
+</ul>
+<pre><code class="language-java">public Mono&lt;CouponIssue&gt; issueCoupon(Long couponId, Long userId) {
+    return reactiveRedisTemplate.execute(
+            RedisScript.of(ISSUE_COUPON_SCRIPT, Long.class),
+            keys,
+            List.of(String.valueOf(userId))
+        )
+        .next()
+        .flatMap(result -&gt; {
+            if (result == 0L) {
+                return Mono.error(
+                    new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED)
+                );
+            }
+            if (result == -1L) {
+                return Mono.error(
+                    new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK)
+                );
+            }
+            return couponIssueRepository.save(
+                CouponIssue.builder()
+                    .couponId(couponId)
+                    .userId(userId)
+                    .build()
+            );
+        });
+}
+</code></pre>
+<ul>
+<li>이 코드에서 스레드는 블로킹되지 않는다. Redis 응답을 기다리는 동안 다른 요청을 처리하고, 응답이 오면 콜백으로 이어서 처리한다.</li>
+</ul>
+<h1>Netty(내장 서버)</h1>
+<ul>
+<li>Spring MVC의 기본 서버가 Tomcat이라면, WebFlux의 기본 서버는 Netty다.</li>
+<li>Netty는 Event Loop 기반의 비동기 네트워크 프레임워크다.</li>
+</ul>
+<pre><code>Client 요청
+    │
+    ▼
+Netty (Event Loop)
+    │
+    ├── Boss Group: 연결 수락
+    └── Worker Group: 실제 처리 (CPU 코어 수 × 2)
+</code></pre>
+<ul>
+<li>별도 설정 없이 <code>spring-boot-starter-webflux</code> 의존성만 추가하면 Netty가 기본으로 동작한다.</li>
+</ul>
+<h1>R2DBC(Non-blocking DB 연결)</h1>
+<ul>
+<li>JPA는 블로킹 방식이라 WebFlux와 함께 쓰면 이벤트 루프를 블로킹해버린다.</li>
+</ul>
+<pre><code class="language-java">// JPA (블로킹)
+User user = userRepository.findById(1L);
+</code></pre>
+<pre><code class="language-java">// R2DBC (Non-blocking)
+Mono&lt;User&gt; user = userRepository.findById(1L);
+</code></pre>
+<ul>
+<li>JPA와 다른 점은 연관관계 매핑이 없다는 것이다.</li>
+</ul>
+<pre><code class="language-java">orderRepository.findById(orderId)
+    .flatMap(order -&gt;
+        Mono.zip(
+            userRepository.findById(order.getUserId()),
+            productRepository.findById(order.getProductId())
+        )
+        .map(tuple -&gt;
+            new OrderDetailResponse(order, tuple.getT1(), tuple.getT2())
+        )
+    );
+</code></pre>
+<h1>블로킹 코드 금지!!</h1>
+<ul>
+<li>이벤트 루프 스레드를 블로킹하면 전체 처리량이 급격히 떨어진다.</li>
+</ul>
+<pre><code class="language-java">// 잘못된 코드
+public Mono&lt;User&gt; findUser(Long id) {
+    Thread.sleep(1000);
+    return userRepository.findById(id);
+}
+</code></pre>
+<pre><code class="language-java">// 올바른 코드
+public Mono&lt;User&gt; findUser(Long id) {
+    return userRepository.findById(id)
+        .delayElement(Duration.ofSeconds(1));
+}
+</code></pre>
+<h1>그래서 언제 어떻게 해야하지?</h1>
+<p>WebFlux가 항상 정답은 아니다.</p>
+<ul>
+<li>MVC
+<ul>
+<li>직관적</li>
+<li>디버깅 쉬움</li>
+<li>유지보수 용이</li>
+</ul>
+</li>
+<li>WebFlux
+<ul>
+<li>비동기 I/O에 강함</li>
+<li>연결 수 많을 때 유리</li>
+</ul>
+</li>
+<li>CompletableFuture 사용 시점
+<ul>
+<li>기존 MVC 유지하면서 일부 병렬 처리</li>
+</ul>
+</li>
+<li>WebFlux 사용 시점
+<ul>
+<li>SSE / WebSocket</li>
+<li>I/O 중심 서비스</li>
+<li>높은 동시성 요구</li>
+</ul>
+</li>
+<li>핵심 기준은 “트래픽”이 아니라 “I/O 대기 시간”이다.</li>
+</ul>
+<h1>NEXT</h1>
+<ul>
+<li>ERD 설계 및 Flyway 마이그레이션</li>
+<li>JWT 로그인 구현 (Access Token + Refresh Token Rotation)</li>
+<li>Spring Security WebFlux 설정</li>
+</ul></article></div></div>
+  </body>
+</html>

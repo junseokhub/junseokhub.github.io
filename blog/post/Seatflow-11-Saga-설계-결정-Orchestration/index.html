@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 11. Saga 설계 결정 (Orchestration) | Record, Then Build</title>
+    <meta name="description" content="Intro 10편에서 예매부터 결제 흐름을 완결시켰다. 결제가 끝나면 예매가 확정되고, 좌석도 확정된다. 정합성 있게 다 이어졌다." />
+    <meta property="og:title" content="[Seatflow] 11. Saga 설계 결정 (Orchestration) | Record, Then Build" />
+    <meta property="og:description" content="Intro 10편에서 예매부터 결제 흐름을 완결시켰다. 결제가 끝나면 예매가 확정되고, 좌석도 확정된다. 정합성 있게 다 이어졌다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-11-Saga-%EC%84%A4%EA%B3%84-%EA%B2%B0%EC%A0%95-Orchestration/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-11-Saga-%EC%84%A4%EA%B3%84-%EA%B2%B0%EC%A0%95-Orchestration/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 11. Saga 설계 결정 (Orchestration)</h1><p>Lab/SeatFlow · 2026-07-09</p><h1>Intro</h1>
+<p>10편에서 예매부터 결제 흐름을 완결시켰다. 결제가 끝나면 예매가 확정되고, 좌석도 확정된다. 정합성 있게 다 이어졌다.</p>
+<p>그런데 취소를 만들려고 보니 문제가 하나 있었다. 확정을 되돌리려면 세 가지를 동시에 되돌려야 한다.</p>
+<pre><code>예매 취소
+  ㄴ reservation: CONFIRMED -&gt; CANCELLED
+  ㄴ seat: RESERVED -&gt; AVAILABLE (좌석 반환)
+  ㄴ payment: 결제 취소 -&gt; 환불
+</code></pre>
+<p>셋 다 다른 서비스, 다른 DB다. 그리고 하나라도 실패하면 문제가 생긴다.</p>
+<ul>
+<li>좌석은 반환됐는데 환불이 실패하면? -&gt; 돈은 안 돌려줬는데 좌석은 풀려서 남이 잡아갈 수 있다.</li>
+<li>환불은 됐는데 좌석 반환이 실패하면? -&gt;  돈은 돌려줬는데 좌석이 계속 잡혀 있다.</li>
+</ul>
+<p>이런 다중 서비스에 걸친 되돌리기, 그리고 부분 실패를 다루는 게 이번 편이다. 결론부터 말하면 이건 Saga가 필요한 문제다.</p>
+<hr/>
+<h1>트랜잭션으론 불가능할까?</h1>
+<p>가장 먼저 든 생각은 그냥 @Transactional로 묶으면 안 되려나? 였다.</p>
+<p>결론부터 말하자면 안된다. reservation, seat, payment가 전부 다른 MySQL 인스턴스다. 하나의 로컬 트랜잭션으로 묶을 수 없다.</p>
+<p>분산 트랜잭션(2PC)이라는 방법이 있긴 한데, 참여자 모두가 커밋 준비를 마칠 때까지 잠금을 들고 대기해야 해서 MSA에서는 잘 안 쓰는 것으로 알고있다. 서비스 하나가 느려지면 전체가 묶여버린다.</p>
+<p>그래서 대안은 각자 로컬 트랜잭션으로 처리하고, 실패하면 이미 처리한 것들을 반대로 되돌리는 보상(compensation)으로 최종 일관성을 맞추는 것이다.</p>
+<hr/>
+<h1>Orchestration vs Choreography</h1>
+<p>Saga를 구현하는 방식은 크게 둘로 나뉜다.</p>
+<pre><code>Choreography (안무)          Orchestration (지휘)
+이벤트로 각자 반응              중앙이 순서대로 명령
+</code></pre>
+<p><strong>Choreography</strong>  중앙 지휘자 없이, 각 서비스가 이벤트를 받고 다음 행동을 스스로 정한다. 지금까지 예매부터 결제의 흐름을 이 방식으로 짜왔다. reservation이 payment.completed를 받아 확정하고, seat이 reservation.confirmed를 받아 확정하는 식이다.</p>
+<p><strong>Orchestration</strong>  중앙 오케스트레이터가 각 참여자에게 명령을 내리고, 응답을 보고 다음 단계를 진행하거나 보상을 지시한다.</p>
+<table><thead><tr><th>구분</th><th><strong>Choreography</strong></th><th><strong>Orchestration</strong></th></tr></thead><tbody><tr><td>조율</td><td>없음(이벤트 연쇄)</td><td>중앙 오케스트레이터</td></tr><tr><td>흐름 파악</td><td>어려움(흩어져 있음)</td><td>쉬움(한 곳에 있음)</td></tr><tr><td>결합도</td><td>낮음(서비스 독립)</td><td>오케스트레이터가 참여자를 다 앎</td></tr><tr><td>보상 처리</td><td>각자 알아서(복잡)</td><td>중앙에서 관리(명확)</td></tr><tr><td>적합한 경우</td><td>단순한 흐름, 참여자가 적음</td><td>복잡한 흐름, 명확한 보상이 필요할 때</td></tr></tbody></table>
+<p>지금까지의 정상 흐름(hold -&gt; 예매 -&gt; 결제 -&gt; 확정)은 Choreography였다. 각 단계가 실패해도 되돌릴 게 없거나(재시도하면 되는 수준), 순서가 단순했기 때문이다.</p>
+<p>하지만 취소는 다르다. 좌석 반환과 환불, 두 단계를 순서대로 밟아야 하고, 환불이 실패하면 좌석 반환을 정확히 되돌려야 한다. Choreography로 짜면 지금 어디까지 됐는지가 여러 서비스에 흩어져서, 실패 시 누가 뭘 되돌려야 하는지 추적하기 어렵다.</p>
+<p>그래서 취소는 Orchestration으로 간다. 중앙에서 순서를 관리하고 보상을 명시적으로 지시하는 게, 흩어진 상태를 추적하는 것보다 안전하다.</p>
+<hr/>
+<h1>오케스트레이터는 누가?</h1>
+<p>Orchestration을 택하면 누가 지휘하냐를 정해야 한다. 선택지는 두 가지였다.</p>
+<pre><code>(a) 별도 orchestrator 서비스 신설
+(b) 기존 서비스 중 하나가 겸함
+</code></pre>
+<p>전용 오케스트레이터 서비스는 Saga가 여러 개로 늘어나 조율 로직 자체가 커질 때 가치가 있다. 지금은 취소 Saga가 하나뿐이라 서비스를 하나 더 만드는 비용이 더 크다.</p>
+<p>그래서 reservation에 두기로 헀다. 취소는 예매에서 시작되고, 예매 상태(CONFIRMED, CANCELLING, CANCELLED)가 Saga 진행의 중심이기도 하다. 이미 10편에서 reservation을 이벤트 발행자로 만들어뒀으니(reservation.confirmed 발행), 그 위에 명령을 발행하는 역할을 얹으면 된다.</p>
+<hr/>
+<h1>동기 호출 vs 비동기 메시징</h1>
+<p>오케스트레이터가 참여자(seat, payment)에게 명령을 내리는 방법도 두 가지다.</p>
+<table><thead><tr><th><strong>방법</strong></th><th><strong>트레이드오프</strong></th></tr></thead><tbody><tr><td>동기 호출(OpenFeign)</td><td>명령-응답이 직관적이나, 환불 같은 외부 PG 호출이 느리면 오케스트레이터 스레드가 블로킹된다. 참여자 하나가 죽으면 전체 취소가 막힌다</td></tr><tr><td>비동기 메시징(Kafka 명령/응답)</td><td>느슨하게 결합되고 외부 호출 지연에도 스레드가 안 묶인다. 대신 응답을 기다리는 상태 관리가 필요하다</td></tr></tbody></table>
+<p>10편에서 결제 금액 검증은 동기 호출(OpenFeign)을 택했다. 그건 그 순간 정확한 값이 필요하다는 생각에 했었다.</p>
+<p>하지만 취소는 다르다. 환불은 외부 PG API를 호출하는 작업이라 느릴 수 있고, 실패할 수도 있다. 이런 걸 동기로 물고 있으면 오케스트레이터가 계속 블로킹된다.</p>
+<p>그래서 취소는 비동기 메시징으로 간다. 명령을 발행하고 끝나며, 응답이 오면 그때 이어받는다. 실무 대규모 환경의 Saga Orchestration도 보통 이 방식이다(Netflix Conductor, AWS Step Functions 등).</p>
+<hr/>
+<h1>Saga의 진행 상태를 어디에 둬야지?</h1>
+<p>비동기라는 게 걸리는 지점이 있다. 명령을 보내고 끝나면, 그 응답이 왔을 때 이게 어느 취소의 응답이고, 지금 몇 번째 단계인지를 알아야 한다. 이걸 어딘가에 기록해야 한다.</p>
+<pre><code>(a) 전용 Saga 상태 엔티티
+(b) Reservation 상태(CANCELLING)만으로
+</code></pre>
+<p>(b)는 세부 단계를 표현할 수 없다. CANCELLING 하나로는 좌석은 반환됐고 환불 대기 중인 상태와과 환불까지 끝나고 마무리 중인 상태를 구분하지 못한다. 응답이 왔을 때 다음에 뭘 해야 할지 판단할 근거가 없다.</p>
+<p>그래서 전용 상태 엔티티(CancelSaga)를 만들었다. reservationId, 현재 단계, 환불 예정 금액을 들고 있는 테이블이다.</p>
+<pre><code>STARTED -&gt; SEAT_RELEASED -&gt; REFUNDED -&gt; COMPLETED     (정상)
+                              ㅣ 환불 실패
+                         COMPENSATING -&gt; FAILED       (보상, 원상복구)
+</code></pre>
+<hr/>
+<h1>취소 정책</h1>
+<p>취소는 아무 때나 되는 게 아니다. 공연일이 가까울수록 취소를 막거나 수수료를 매기는 게 실제 티켓팅의 방식이다.</p>
+<pre><code>관람 10일 전까지  -&gt; 전액 환불
+관람 7~9일 전    -&gt; 10% 수수료
+관람 4~6일 전    -&gt; 20% 수수료
+관람 1~3일 전    -&gt; 30% 수수료
+관람 당일 이후    -&gt; 취소 불가
+</code></pre>
+<p>이 계산은 취소 Saga와 별개의 관심사라 정책 클래스로 분리했다. Saga 흐름 코드에 수수료 계산 분기가 섞이면 흐름을 읽기 어려워진다.</p>
+<pre><code>public static BigDecimal calculateRefund(BigDecimal amount, LocalDateTime showDate, LocalDateTime now) {
+    long days = daysUntilShow(showDate, now);
+    BigDecimal rate = days &gt;= 10 ? new BigDecimal(&quot;1.00&quot;)
+            : days &gt;= 7 ? new BigDecimal(&quot;0.90&quot;)
+            : days &gt;= 4 ? new BigDecimal(&quot;0.80&quot;)
+            : days &gt;= 1 ? new BigDecimal(&quot;0.70&quot;)
+            : throwUncancellable();
+    return amount.multiply(rate).setScale(2, RoundingMode.HALF_UP);
+}
+</code></pre>
+<p>이 계산이 가능한 이유가 10편에 있다. 10편에서 showDate를 show -&gt; seat -&gt; reservation으로 흘려보냈다. 그때는 가격 검증을 위해서였는데, 여기서는 취소 마감을 계산하는 근거로 재사용된다.</p>
+<p>지금은 공연을 단일 일시(1회성)로 가정한다. 실제 공연은 기간에 걸친 여러 회차가 있을 수 있는데, 그 경우 회차별로 관람일이 다르므로 회차(schedule) 모델이 필요하다. 지금 구조는 그걸 다루지 않는다. 향후 확장 지점으로 남겨둔다.</p>
+<hr/>
+<h1>Saga인 것과 아닌 것 구분하기</h1>
+<p>여기서 하나 짚어둘 게 있다. 10편에서 만든 결제 완료 -&gt; 좌석 확정도 여러 서비스에 걸친 흐름이지만, 그건 Saga로 만들지 않았다. 이유는 되돌릴 게 없기 때문이다. 확정이 실패해도 재시도하면 그만이고, 보상해야 할 이전 단계가 없다.</p>
+<p>Saga는 보상이 필요한 흐름에만 쓴다.</p>
+<p>모든 다중 서비스 흐름을 Saga로 만들면 오히려 과하다. 이번 취소는 좌석 반환과 환불이라는 되돌려야 할 단계가 있어서 Saga가 필요했다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>예매 취소는 좌석 반환과 환불을 되돌려야 하는 다중 서비스 흐름이라 트랜잭션이 아니라 Saga가 필요하다.</li>
+<li>Choreography 대신 Orchestration을 택했다. 보상이 필요한 흐름은 중앙에서 순서와 보상을 명시적으로 관리하는 게 안전하다.</li>
+<li>reservation이 오케스트레이터를 겸한다. 취소의 시작점이 예매이고, 전용 서비스를 둘 만큼 Saga가 아직 많지 않다.</li>
+<li>참여자와의 통신은 비동기 메시징이다. 환불(외부 PG)이 느리거나 실패할 수 있는 작업이라 동기 호출로 블로킹시키지 않는다.</li>
+<li>Saga 진행 상태는 전용 엔티티(CancelSaga)로 추적한다. 비동기라 응답이 왔을 때 다음 단계를 판단할 근거가 필요하다.</li>
+<li>취소 수수료는 공연일 기준 정책으로 분리했고, 10편에서 흘려둔 showDate를 재사용한다.</li>
+</ul>
+<hr/>
+<h1>NEXT</h1>
+<p>설계는 끝났다. 다음 편에서 명령/응답 이벤트를 정의하고, 오케스트레이터가 실제로 좌석 반환과 환불을 지휘하고, 환불이 실패했을 때 보상하는 것까지 구현한다.</p></article></div></div>
+  </body>
+</html>

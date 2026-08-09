@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Spring] Gradle MSA에서 모듈을 어떻게 해야할까? | Record, Then Build</title>
+    <meta name="description" content="SpringBoot + Gradle로 MSA를 구성할 때 가장 먼저 맞닥뜨리는 문제가 있다. &gt; 공통 설정을 어디에 두고, 어떻게 각 모듈에 적용할까?" />
+    <meta property="og:title" content="[Spring] Gradle MSA에서 모듈을 어떻게 해야할까? | Record, Then Build" />
+    <meta property="og:description" content="SpringBoot + Gradle로 MSA를 구성할 때 가장 먼저 맞닥뜨리는 문제가 있다. &gt; 공통 설정을 어디에 두고, 어떻게 각 모듈에 적용할까?" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Spring-Gradle-MSA%EC%97%90%EC%84%9C-%EB%AA%A8%EB%93%88%EC%9D%84-%EC%96%B4%EB%96%BB%EA%B2%8C-%ED%95%B4%EC%95%BC%ED%95%A0%EA%B9%8C/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/spring.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Spring-Gradle-MSA%EC%97%90%EC%84%9C-%EB%AA%A8%EB%93%88%EC%9D%84-%EC%96%B4%EB%96%BB%EA%B2%8C-%ED%95%B4%EC%95%BC%ED%95%A0%EA%B9%8C/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Spring] Gradle MSA에서 모듈을 어떻게 해야할까?</h1><p>Frameworks/Spring · 2026-06-18</p><p>SpringBoot + Gradle로 MSA를 구성할 때 가장 먼저 맞닥뜨리는 문제가 있다.</p>
+<blockquote>
+<p>공통 설정을 어디에 두고, 어떻게 각 모듈에 적용할까?</p>
+</blockquote>
+<p>Java Toolchain 버전, Lombok, 테스트 설정, BOM같은 것들은 서비스마다 복붙하다보면 어느샌가 관리가 힘들어진다. 먼저 이걸 해결할 수 있는 방법은 크게 4가지가 있다.</p>
+<ol>
+<li><strong>Cross-project Configuration</strong> (Root build.gradle에서 서브 프로젝트에 주입)</li>
+</ol>
+<p>2. <strong>buildSrc</strong> Convention Plugin</p>
+<p>3. <strong>build-logic</strong> Convention Plugin (Composite Build)</p>
+<p>4. <strong>각 모듈에 독립적으로 설정</strong></p>
+<p>지금부터는 각각 어떤 방식인지, 각 방식에 어떤 장단점이 있는지 알아보려고 한다.</p>
+<hr/>
+<h2>Cross-project Configuration</h2>
+<p><code>Root build.gradle</code>에서 서브 프로젝트를 필터링해 설정을 밀어 넣는 방식이다.</p>
+<h3>Groovy DSL</h3>
+<pre><code>// build.gradle (루트)
+subprojects {
+    apply plugin: &#x27;java&#x27;
+    apply plugin: &#x27;org.springframework.boot&#x27;
+    apply plugin: &#x27;io.spring.dependency-management&#x27;
+
+    dependencies {
+        compileOnly &#x27;org.projectlombok:lombok&#x27;
+        annotationProcessor &#x27;org.projectlombok:lombok&#x27;
+    }
+}
+
+// 또는 필터링해서 일부에만 적용
+configure(subprojects.findAll { it.parent?.name == &#x27;services&#x27; }) {
+    apply plugin: &#x27;org.springframework.boot&#x27;
+}
+</code></pre>
+<h3>Kotlin DSL</h3>
+<pre><code>// build.gradle.kts (루트)
+subprojects {
+    apply(plugin = &quot;java&quot;)
+    apply(plugin = &quot;org.springframework.boot&quot;)
+    apply(plugin = &quot;io.spring.dependency-management&quot;)
+
+    dependencies {
+        &quot;compileOnly&quot;(&quot;org.projectlombok:lombok&quot;)
+        &quot;annotationProcessor&quot;(&quot;org.projectlombok:lombok&quot;)
+    }
+}
+
+// 또는 필터링
+configure(subprojects.filter { it.parent?.name == &quot;services&quot; }) {
+    apply(plugin = &quot;org.springframework.boot&quot;)
+}
+</code></pre>
+<h3>각 서비스 모듈</h3>
+<pre><code>// services/xxx-service/build.gradle
+dependencies {
+    implementation &#x27;org.springframework.boot:spring-boot-starter-web&#x27;
+}
+</code></pre>
+<pre><code>// services/xxx-service/build.gradle.kts
+dependencies {
+    implementation(&quot;org.springframework.boot:spring-boot-starter-web&quot;)
+}
+</code></pre>
+<p>루트에서 공통 설정을 주입하기 때문에 각 서비스 모듈은 자기 의존성만 선언하면 된다.</p>
+<h3>장점</h3>
+<ul>
+<li>별도 디렉토리나 파일 없이 루트 한 곳에서 모든 설정 관리</li>
+<li>설정이 어디에 있는지 바로 알 수 있음</li>
+<li>작은 프로젝트에서 빠르게 시작 가능</li>
+</ul>
+<h3>단점</h3>
+<ul>
+<li>Gradle 공식 비권장 방식이다. <a href="https://docs.gradle.org/current/userguide/sharing_build_logic_between_subprojects.html">Gradle 문서</a>는 명시적으로 이 방식을 피하라고 한다.</li>
+<li>루트가 서브프로젝트를 알아야 하므로 프로젝트 격리(Project Isolation)가 깨진다 -&gt; Configuration Cache, Isolated Projects 같은 최적화와 호환이 안된다.</li>
+<li>병렬 빌드가 제대로 동작하지 않는다.</li>
+<li>어떤 모듈에 어떤 설정이 적용됐는지 루트를 봐야만 알 수 있다.</li>
+<li>모듈이 많아질수록 루트 build.gradle이 복잡해진다.</li>
+</ul>
+<hr/>
+<h2>buildSrc Convention Plugin</h2>
+<p>buildSrc는 Gradle이 자동으로 인식하는 특수 디렉토리다. 이 안에 Convention Plugin을 만들면 모든 서브프로젝트에서 플러그인 ID로 참조할 수 있다.</p>
+<h3>디렉토리 구조</h3>
+<pre><code>my-msa/
+├── buildSrc/
+│   ├── build.gradle (또는 .kts)
+│   └── src/main/groovy/ (또는 kotlin/)
+│       ├── myapp.java-base-conventions.gradle
+│       ├── myapp.library-conventions.gradle
+│       └── myapp.application-conventions.gradle
+├── libs/
+│   └── common-web/
+└── services/
+    └── payment-service/
+</code></pre>
+<h3>buildSrc/build.gradle</h3>
+<h4>Groovy DSL</h4>
+<pre><code>plugins {
+    id &#x27;groovy-gradle-plugin&#x27;
+}
+
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+}
+
+dependencies {
+    implementation &#x27;org.springframework.boot:spring-boot-gradle-plugin:3.5.0&#x27;
+    implementation &#x27;io.spring.gradle:dependency-management-plugin:1.1.7&#x27;
+}
+</code></pre>
+<h4>Kotiln DSL</h4>
+<pre><code>plugins {
+    `kotlin-dsl`
+}
+
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+}
+
+dependencies {
+    implementation(&quot;org.springframework.boot:spring-boot-gradle-plugin:3.5.0&quot;)
+    implementation(&quot;io.spring.gradle:dependency-management-plugin:1.1.7&quot;)
+}
+</code></pre>
+<h3>Convention Plugin 작성</h3>
+<h4>Groovy DSL</h4>
+<pre><code>// buildSrc/src/main/groovy/myapp.java-base-conventions.gradle
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+plugins {
+    id &#x27;java&#x27;
+    id &#x27;io.spring.dependency-management&#x27;
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencyManagement {
+    imports {
+        mavenBom(SpringBootPlugin.BOM_COORDINATES)
+    }
+}
+
+dependencies {
+    compileOnly &#x27;org.projectlombok:lombok&#x27;
+    annotationProcessor &#x27;org.projectlombok:lombok&#x27;
+    testImplementation &#x27;org.springframework.boot:spring-boot-starter-test&#x27;
+}
+</code></pre>
+<pre><code>// buildSrc/src/main/groovy/myapp.library-conventions.gradle
+plugins {
+    id &#x27;java-library&#x27;
+    id &#x27;myapp.java-base-conventions&#x27;
+}
+</code></pre>
+<pre><code>// buildSrc/src/main/groovy/myapp.application-conventions.gradle
+plugins {
+    id &#x27;myapp.java-base-conventions&#x27;
+    id &#x27;org.springframework.boot&#x27;
+}
+</code></pre>
+<h4>Kotlin DSL</h4>
+<pre><code>// buildSrc/src/main/kotlin/myapp.java-base-conventions.gradle.kts
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+plugins {
+    java
+    id(&quot;io.spring.dependency-management&quot;)
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencyManagement {
+    imports {
+        mavenBom(SpringBootPlugin.BOM_COORDINATES)
+    }
+}
+
+dependencies {
+    &quot;compileOnly&quot;(&quot;org.projectlombok:lombok&quot;)
+    &quot;annotationProcessor&quot;(&quot;org.projectlombok:lombok&quot;)
+    &quot;testImplementation&quot;(&quot;org.springframework.boot:spring-boot-starter-test&quot;)
+}
+</code></pre>
+<pre><code>// buildSrc/src/main/kotlin/myapp.library-conventions.gradle.kts
+plugins {
+    `java-library`
+    id(&quot;myapp.java-base-conventions&quot;)
+}
+</code></pre>
+<pre><code>// buildSrc/src/main/kotlin/myapp.application-conventions.gradle.kts
+plugins {
+    id(&quot;myapp.java-base-conventions&quot;)
+    id(&quot;org.springframework.boot&quot;)
+}
+</code></pre>
+<h3>각 모듈에서 사용</h3>
+<h4>Groovy</h4>
+<pre><code>// libs/common-web/build.gradle
+plugins {
+    id &#x27;myapp.library-conventions&#x27;
+}
+
+dependencies {
+    api &#x27;org.springframework.boot:spring-boot-starter-web&#x27;
+}
+</code></pre>
+<pre><code>// services/xxx-service/build.gradle
+plugins {
+    id &#x27;myapp.application-conventions&#x27;
+}
+
+dependencies {
+    implementation &#x27;org.springframework.boot:spring-boot-starter-data-jpa&#x27;
+    implementation project(&#x27;:libs:common-web&#x27;)
+}
+</code></pre>
+<h4>Kotlin</h4>
+<pre><code>// libs/common-web/build.gradle.kts
+plugins {
+    id(&quot;myapp.library-conventions&quot;)
+}
+
+dependencies {
+    api(&quot;org.springframework.boot:spring-boot-starter-web&quot;)
+}
+</code></pre>
+<pre><code>// services/xxx-service/build.gradle.kts
+plugins {
+    id(&quot;myapp.application-conventions&quot;)
+}
+
+dependencies {
+    implementation(&quot;org.springframework.boot:spring-boot-starter-data-jpa&quot;)
+    implementation(project(&quot;:libs:common-web&quot;))
+}
+</code></pre>
+<h3>장점</h3>
+<ul>
+<li>별도 설정 없이 buildSrc 디렉토리만 만들면 Gradle이 자동 인식</li>
+<li>Cross-project Configuration보다 각 모듈이 독립적으로 선언 → 격리도 향상</li>
+<li>Convention Plugin 단위로 역할이 명확하게 분리됨</li>
+<li>각 모듈의 build.gradle이 매우 짧아짐</li>
+</ul>
+<h3>단점</h3>
+<ul>
+<li>buildSrc 안 파일이 단 하나라도 바뀌면 <strong>전체 프로젝트 빌드 캐시가 무효화</strong>된다</li>
+<li>buildSrc의 클래스로더가 메인 빌드와 분리되지 않아 의존성이 노출될 수 있다</li>
+<li>모듈이 수십 개 이상이고 Convention Plugin을 자주 수정하면 빌드 시간이 체감될 수 있다</li>
+</ul>
+<hr/>
+<h2>build-logic Convention Plugin (Composite Build)</h2>
+<p>buildSrc와 구조는 동일하지만, settings.gradle에 includeBuild(&quot;build-logic&quot;)으로 직접 등록하는 방식이다. Gradle 공식 문서가 명시적으로 권장하는 방법이다.</p>
+<h3>디렉토리 구조</h3>
+<pre><code>my-msa/
+├── settings.gradle (또는 .kts)        // includeBuild(&quot;build-logic&quot;) 등록
+├── build.gradle (또는 .kts)
+├── build-logic/
+│   ├── settings.gradle (또는 .kts)    // build-logic 자체 프로젝트 선언
+│   ├── build.gradle (또는 .kts)       // Spring Boot 버전 등 선언
+│   └── src/main/groovy/ (또는 kotlin/)
+│       ├── myapp.java-base-conventions.gradle (.kts)
+│       ├── myapp.library-conventions.gradle (.kts)
+│       └── myapp.application-conventions.gradle (.kts)
+├── libs/
+└── services/
+</code></pre>
+<h3>Root setting.gradle</h3>
+<h4>Groovy DSL</h4>
+<pre><code>// settings.gradle (Root)
+rootProject.name = &#x27;my-msa&#x27;
+
+includeBuild &#x27;build-logic&#x27;   // 이 줄이 없으면 build-logic이 인식되지 않는다
+
+dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+    repositories {
+        mavenCentral()
+    }
+}
+
+include(
+    &#x27;libs:common-web&#x27;,
+    &#x27;services:xxx-service&#x27;,
+    &#x27;services:xxx1-service&#x27; //.....
+)
+</code></pre>
+<h4>Kotiln DSL</h4>
+<pre><code>// settings.gradle.kts (Root)
+rootProject.name = &quot;my-msa&quot;
+
+includeBuild(&quot;build-logic&quot;)
+
+dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+    repositories {
+        mavenCentral()
+    }
+}
+
+include(
+    &#x27;libs:common-web&#x27;,
+    &#x27;services:xxx-service&#x27;,
+    &#x27;services:xxx1-service&#x27; //.....
+)
+</code></pre>
+<h3>build-logic 자체 설정</h3>
+<h4>Groovy DSL</h4>
+<pre><code>// build-logic/settings.gradle
+rootProject.name = &#x27;build-logic&#x27;
+</code></pre>
+<pre><code>// build-logic/build.gradle
+plugins {
+    id &#x27;groovy-gradle-plugin&#x27;
+}
+
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+}
+
+dependencies {
+    implementation &#x27;org.springframework.boot:spring-boot-gradle-plugin:3.5.0&#x27;
+    implementation &#x27;io.spring.gradle:dependency-management-plugin:1.1.7&#x27;
+}
+</code></pre>
+<h4>Kotlin DSL</h4>
+<pre><code>// build-logic/settings.gradle.kts
+rootProject.name = &quot;build-logic&quot;
+</code></pre>
+<pre><code>// build-logic/build.gradle.kts
+plugins {
+    `kotlin-dsl`   // 이게 빠지면 Convention Plugin이 생성되지 않는다
+}
+
+repositories {
+    mavenCentral()
+    gradlePluginPortal()
+}
+
+dependencies {
+    implementation(&quot;org.springframework.boot:spring-boot-gradle-plugin:3.5.0&quot;)
+    implementation(&quot;io.spring.gradle:dependency-management-plugin:1.1.7&quot;)
+}
+</code></pre>
+<p>Convention Plugin 작성 방식과 각 모듈에서 사용하는 방식은 buildSrc와 동일하다. 차이는 Gradle이 자동 인식하느냐, settings.gradle에 직접 등록하느냐뿐이다.</p>
+<h3>buildSrc vs build-logic 차이 요약</h3>
+<table><thead><tr><th><strong>항목</strong></th><th><strong>buildSrc</strong></th><th><strong>build-logic</strong></th></tr></thead><tbody><tr><td>인식 방식</td><td>Gradle 자동 인식</td><td>includeBuild()로 직접 등록</td></tr><tr><td>캐시 무효화</td><td>파일 변경 시 전체 캐시 무효화</td><td>변경된 부분만 무효화</td></tr><tr><td>클래스로더 격리</td><td>메인 빌드와 공유</td><td>독립적으로 격리</td></tr><tr><td>설정 복잡도</td><td>낮음 (디렉토리만 생성)</td><td>약간 높음 (settings.gradle 추가 필요)</td></tr><tr><td>Gradle 권장 여부</td><td>단순 프로젝트에 적합</td><td>공식 권장</td></tr></tbody></table>
+<h3>장점</h3>
+<ul>
+<li>buildSrc의 캐시 무효화 문제가 없다 → 빌드 속도 유지</li>
+<li>클래스로더가 격리되어 의존성 충돌 가능성이 낮다</li>
+<li>각 모듈이 필요한 Convention Plugin을 직접 선언 → 설정 주입이 아닌 선언</li>
+<li>Gradle 공식 권장 방식</li>
+</ul>
+<h3>단점</h3>
+<ul>
+<li>build-logic/settings.gradle 파일을 추가로 관리해야 한다</li>
+<li>includeBuild() 등록을 빠뜨리면 Plugin not found 에러가 나고, 처음에 당황할 수 있다</li>
+<li>buildSrc보다 초기 설정이 살짝 더 많다</li>
+</ul>
+<hr/>
+<h2>각 모듈이 독립적으로 설정</h2>
+<p>말 그대로 공통화 없이 각 모듈이 모든 설정을 직접 선언하는 방식이다.</p>
+<h3>장점</h3>
+<ul>
+<li>각 모듈이 완전히 독립적 → 다른 모듈 변경에 전혀 영향받지 않음</li>
+<li>빌드 파일만 보면 그 모듈에 무엇이 적용됐는지 전부 알 수 있음</li>
+<li>모듈 간 의존 없이 추출하거나 다른 프로젝트로 이동하기 쉬움</li>
+</ul>
+<h3>단점</h3>
+<ul>
+<li>Spring Boot 버전을 올릴 때 모든 모듈을 일일이 수정해야 함</li>
+<li>Lombok, Toolchain 등 공통 설정이 모든 파일에 반복됨</li>
+<li>모듈이 10개 이상이면 관리 비용이 급격히 증가함</li>
+<li>실수로 한 모듈만 버전이 달라지는 문제가 생기기 쉬움</li>
+</ul>
+<hr/>
+<h2>라이브러리 모듈에서 BOM은 어떻게 가져올까?</h2>
+<p>서비스 모듈은 org.springframework.boot 플러그인이 BOM을 자동으로 끌어온다. 그런데 실행 가능한 JAR가 필요 없는 라이브러리 모듈은 어떻게 해야 할까?</p>
+<h3>boot 플러그인을 붙이고 bootJar를 비활성화 (비권장)</h3>
+<pre><code>// Groovy
+plugins {
+    id &#x27;org.springframework.boot&#x27;
+    id &#x27;io.spring.dependency-management&#x27;
+}
+
+bootJar.enabled = false
+jar.enabled = true
+</code></pre>
+<pre><code>// Kotlin DSL
+plugins {
+    id(&quot;org.springframework.boot&quot;)
+    id(&quot;io.spring.dependency-management&quot;)
+}
+
+tasks.withType&lt;BootJar&gt; { enabled = false }
+tasks.withType&lt;Jar&gt; { enabled = true }
+</code></pre>
+<h3>BOM을 버전 하드코딩으로 직접 import</h3>
+<pre><code>// Groovy
+dependencyManagement {
+    imports {
+        mavenBom &#x27;org.springframework.boot:spring-boot-dependencies:3.5.0&#x27;
+    }
+}
+</code></pre>
+<pre><code>// Kotlin DSL
+dependencyManagement {
+    imports {
+        mavenBom(&quot;org.springframework.boot:spring-boot-dependencies:3.5.0&quot;)
+    }
+}
+</code></pre>
+<p>버전을 직접 하드코딩해야 해서 루트에서 Spring Boot 버전을 올려도 여기를 따로 바꿔야 한다.</p>
+<h3>Convention Plugin에서 SpringBootPlugin.BOM_COORDINATES 사용 (권장)</h3>
+<pre><code>// buildSrc 또는 build-logic의 myapp.java-base-conventions.gradle
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+plugins {
+    id &#x27;java&#x27;
+    id &#x27;io.spring.dependency-management&#x27;
+}
+
+dependencyManagement {
+    imports {
+        mavenBom(SpringBootPlugin.BOM_COORDINATES)
+    }
+}
+</code></pre>
+<pre><code>// buildSrc 또는 build-logic의 myapp.java-base-conventions.gradle.kts
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+plugins {
+    java
+    id(&quot;io.spring.dependency-management&quot;)
+}
+
+dependencyManagement {
+    imports {
+        mavenBom(SpringBootPlugin.BOM_COORDINATES)
+    }
+}
+</code></pre>
+<p>SpringBootPlugin.BOM_COORDINATES는 build-logic/build.gradle에 선언한 spring-boot-gradle-plugin 버전과 자동으로 연동된다. 버전을 한 곳에서만 관리하면 전체에 반영된다.</p>
+<hr/>
+<h2>api() vs implementation()</h2>
+<p>java-library 플러그인을 쓰면 의존성 선언이 두 가지로 나뉜다.</p>
+<pre><code>// Groovy
+dependencies {
+    // 이 라이브러리를 사용하는 모듈에도 전파됨
+    api &#x27;org.springframework.boot:spring-boot-starter-web&#x27;
+
+    // 이 라이브러리 내부에서만 사용, 외부에 노출 안 됨
+    implementation &#x27;com.fasterxml.jackson.core:jackson-databind&#x27;
+}
+</code></pre>
+<pre><code>// Kotlin DSL
+dependencies {
+    // 이 라이브러리를 사용하는 모듈에도 전파됨
+    api(&quot;org.springframework.boot:spring-boot-starter-web&quot;)
+
+    // 이 라이브러리 내부에서만 사용, 외부에 노출 안 됨
+    implementation(&quot;com.fasterxml.jackson.core:jackson-databind&quot;)
+}
+</code></pre>
+<p>공개 API에 타입이 노출되는 의존성은 api(), 내부 구현에만 쓰이는 건 implementation()이다. implementation()을 쓸수록 의존성이 불필요하게 전파되지 않아 컴파일 범위가 좁아지고 빌드가 빨라진다.</p>
+<hr/>
+<h2>그래서 어떤 걸 선택하면 좋을까?</h2>
+<p>상황에 따라 다르다.</p>
+<p><strong>서비스가 3개 이하, 빠르게 프로토타이핑</strong>이 목적이라면 Cross-project Configuration이나 독립 설정도 나쁘지 않다. 어차피 금방 버린다.</p>
+<p><strong>서비스가 늘어날 것 같고, 팀이 같이 쓰는 공유 프로젝트</strong>라면 build-logic Convention Plugin이 적합하다. 처음 설정이 조금 더 필요하지만 이후 모듈 추가가 훨씬 간단해진다.</p>
+<p><strong>혼자 쓰고 Convention Plugin 개념만 익혀보고 싶다면</strong> buildSrc로 시작해도 충분하다. 구조는 build-logic과 동일해서 나중에 마이그레이션도 어렵지 않다.</p>
+<p>직접 적용해보니 build-logic 방식에서 새 서비스나 라이브러리를 추가할 때 할 일이 두 가지로 줄었다. settings.gradle에 모듈 선언하고, build.gradle에 Convention Plugin ID 한 줄 쓰는 게 전부다. 나머지(Toolchain, BOM, Lombok, 테스트 설정)는 자동으로 따라온다.</p>
+<hr/>
+<h2>마치며</h2>
+<p>Gradle 멀티모듈 구조에서 캡슐화 전략을 고를 때 핵심은 두 가지다.</p>
+<ul>
+<li><strong>공통 설정을 어디에 둘 것인가</strong> (루트 주입 vs Convention Plugin)</li>
+<li><strong>각 모듈이 얼마나 독립적으로 선언할 것인가</strong> (주입받는 구조 vs 직접 선언하는 구조)</li>
+</ul>
+<p>Cross-project Configuration은 빠르지만 Gradle이 비권장하고 확장성이 나쁘다. 독립 설정은 격리는 완벽하지만 반복이 심하다. Convention Plugin(buildSrc 또는 build-logic)은 그 사이에서 실용적인 균형점이다. 그중에서도 build-logic이 캐시 효율과 격리 면에서 한 단계 더 낫다.</p>
+<p>결국 어떤 방법이든 트레이드오프가 있고, 팀 규모와 프로젝트 규모에 맞게 선택하면 된다.</p></article></div></div>
+  </body>
+</html>

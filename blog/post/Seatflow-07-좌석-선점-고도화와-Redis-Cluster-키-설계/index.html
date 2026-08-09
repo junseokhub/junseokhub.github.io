@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 07. 좌석 선점 고도화와 Redis Cluster 키 설계 | Record, Then Build</title>
+    <meta name="description" content="Intro 5편에서 좌석 임시 점유를 Redis setIfAbsent 한 줄로 짰다." />
+    <meta property="og:title" content="[Seatflow] 07. 좌석 선점 고도화와 Redis Cluster 키 설계 | Record, Then Build" />
+    <meta property="og:description" content="Intro 5편에서 좌석 임시 점유를 Redis setIfAbsent 한 줄로 짰다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-07-%EC%A2%8C%EC%84%9D-%EC%84%A0%EC%A0%90-%EA%B3%A0%EB%8F%84%ED%99%94%EC%99%80-Redis-Cluster-%ED%82%A4-%EC%84%A4%EA%B3%84/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-07-%EC%A2%8C%EC%84%9D-%EC%84%A0%EC%A0%90-%EA%B3%A0%EB%8F%84%ED%99%94%EC%99%80-Redis-Cluster-%ED%82%A4-%EC%84%A4%EA%B3%84/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 07. 좌석 선점 고도화와 Redis Cluster 키 설계</h1><p>Lab/SeatFlow · 2026-06-21</p><h1>Intro</h1>
+<p>5편에서 좌석 임시 점유를 Redis setIfAbsent 한 줄로 짰다.</p>
+<p>사용자가 좌석을 고르면 5분 동안 그 좌석을 잡아두는 거였다. 그땐 그걸로 충분했다.</p>
+<p>그런데 이번에 좌석 도메인을 좀 더 만지면서 보니, 그 단순함이 깨지는 지점들이 보였다. 점유를 <strong>푸는(release)</strong> 순간, 그리고 여러 좌석을 한 번에 잡는 순간. 둘 다 명령이 하나면 괜찮은데 여러 개가 엮이면 동시성 문제가 생긴다.</p>
+<p>이번 편에서 동시성 문제들을 Lua 스크립트로 닫고, 나중에 Redis Cluster로 갔을 때 안 깨지도록 키 설계까지 본다.</p>
+<p>미리 짚어둘 게 하나 있다. 지금 <strong>좌석을 DB에 생성하는 로직이 아직 없다.</strong> 공연이 등록되면 그 공연 좌석들이 DB에 깔려야 하는데, 나중에 show.created 이벤트로 연동할 예정이다. 이번 편 테스트는 그게 없어서 <strong>임시로 좌석 데이터를 DB에 직접 넣고</strong> 진행했다.</p>
+<hr/>
+<h1>지금 좌석 점유는 어떻게 되어 있을까?</h1>
+<p>현재 점유 코드는 이거다</p>
+<pre><code>public boolean hold(String showId, Long seatId, String userId) {
+    String key = &quot;seat:hold:&quot; + showId + &quot;:&quot; + seatId;
+    Boolean result = redisTemplate.opsForValue()
+            .setIfAbsent(key, userId, 5, TimeUnit.MINUTES);   // SET key val NX EX 300
+    return Boolean.TRUE.equals(result);
+}
+</code></pre>
+<p>setIfAbsent은 Redis의 SET ... NX다. 이 키가 비어있으면 내가 잡고, 이미 있으면 실패를 한 번에 한다. 결론부터 말하면 <strong>이 단일 좌석 점유는 손댈 게 없다.</strong> 이미 안전하다. 왜 안전한지부터 보자.</p>
+<h2>원자적</h2>
+<p>여러 작업이 중간에 끼어듦 없이 통째로 처리되는 걸 **원자적(atomic)**이라고 한다. 절반만 되다 마는 일이 없다는 뜻이다.</p>
+<p>여기서 헷갈리기 쉬운 게 있다. &quot;기존 setIfAbsent도 원자적이고, 앞으로 쓸 Lua도 원자적이라는데, 그럼 뭐가 다른 거야?&quot; 차이는 <strong>원자적인 단위</strong>에 있다.</p>
+<p>SET NX는 Redis 명령 딱 하나다. Redis는 명령 하나하나를 끊김 없이 처리하니까, 이 명령은 그 자체로 원자적이다. <strong>명령이 하나뿐이라 애초에 동시성 문제가 없다.</strong> 그래서 여기엔 Lua가 필요 없다. 단일 좌석 점유는 setIfAbsent로 충분하다는 게 이 뜻이다.</p>
+<p>문제는 <strong>명령을 여러 개 엮어야 할 때</strong> 생긴다. 그게 release다.</p>
+<h2>release의 동시성 문제</h2>
+<p>좌석 점유를 푸는 건 단순히 키를 지우면 될 것 같다. 그런데 그냥 지우면 안 된다. <strong>내가 잡은 좌석인지 확인하고 지워야 한다.</strong> 안 그러면 남의 점유를 풀어버릴 수 있다.</p>
+<p>왜 그럴까?</p>
+<ol>
+<li>userA가 좌석을 잡는다. seat:hold:show1:5 = userA, 5분 뒤 만료</li>
+<li>userA가 5분 안에 결제를 안 한다 -&gt; TTL 만료로 키가 자동 삭제됨</li>
+<li>그 직후 userB가 같은 좌석을 잡는다 -&gt; seat:hold:show1:5 = userB</li>
+<li>그제서야 userA의 &quot;점유 해제&quot; 요청이 도착한다 -&gt; 키를 지움 -&gt; <strong>userB가 멀쩡히 잡고 있던 좌석이 풀려버린다</strong></li>
+</ol>
+<p>userA는 자기 걸 푼다고 한 건데 userB 걸 날린 거다. 그래서 release는 &quot;이 좌석을 해제&quot;가 아니라 &quot;내가 잡은 게 맞으면 해제&quot;여야 한다. 소유자를 확인하고 지워야 한다는 거다. 코드로 순진하게 짜면 이렇다.</p>
+<pre><code>String holder = getHolder(showId, seatId);   // 명령1 GET - 누가 잡았나
+if (userId.equals(holder)) {                 // 내가 잡은 게 맞으면
+    delete(showId, seatId);                  // 명령2 DEL — 지운다
+}
+</code></pre>
+<p><strong>그런데 여기에 또 동시성 문제가 있다.</strong></p>
+<p>GET으로 userA구나 확인하고, DEL로 지우는 그 사이에, TTL이 만료되고 userB가 잡아버리면??
+명령1번에선 userA로 읽혔으니 통과해서 명령2번에서 userB 걸 지운다. 똑같은 문제가 반복된다.</p>
+<h2>같은 메서드 안에 두면 같이 실행될까?</h2>
+<p>GET이랑 DEL을 같은 자바 메서드에 나란히 적어두면 한 묶음으로 도는 거 아닌가?</p>
+<p>아니다. <strong>메서드로 묶는 건 자바 얘기지 Redis 얘기가 아니다.</strong> 자바 메서드 안에서 두 줄이 붙어있어도, Redis 입장에선 네트워크로 명령이 2번 따로 날아온다. GET 보내고 응답 받아서 끝, 그 다음 DEL 보내고 응답 받아서 끝.</p>
+<p><strong>Redis 서버는 이 둘이 같은 메서드에서 나왔는지 전혀 모른다.</strong> 그냥 &quot;GET 요청 하나, 좀 있다 DEL 요청 하나&quot; 받은 거다. 그래서 그 두 번의 왕복 사이에 다른 사람(userB)의 명령도 처리한다.</p>
+<pre><code>자바:   [ getHolder ----- delete ]   // 한 메서드라 붙어 보임
+              (네트워크)    
+Redis:  ...GET... (userB의 SET) ...DEL...  // 서버에선 따로, 사이에 남이 끼어듦
+</code></pre>
+<p>결국 GET 각각, DEL 각각은 원자적인데, 둘을 합친 &#x27;확인하고 지운다&#x27;는 원자적이 아니다.
+원자성은 명령 단위로 보장되지 내가 짠 로직 단위로 보장되는 게 아니다.</p>
+<hr/>
+<h1>Lua로 release 묶기</h1>
+<p>그냥 DEL 소유자를 안 보고 지운다. 위에서 봤듯 남의 점유를 풀 수 있어서 안 된다.
+GET 후 DEL (자바에서) 소유자는 확인하지만, GET과 DEL 사이 동시성 문제가 안 사라진다.</p>
+<p>GET, 비교, DEL을 Redis 안에서 한 덩어리로 실행한다.
+Redis는 싱글 스레드라 스크립트가 도는 동안 다른 명령이 단 하나도 못 끼어든다. 그래서 동시성 문제가 아예 없어진다.
+나는 Lua로 갔다. 정리하면 <strong>단일 명령은 NX로 충분하고, 여러 명령을 조건부로 엮어야 할 때만 Lua.</strong>
+Lua가 무조건 더 원자적이 아니라 여러 명령을 하나로 묶을 때 Lua를 사용하는 것이다.</p>
+<p>여기서 설계 하나를 더 했다. 보통 Lua release는 지웠으면 1, 아니면 0만 돌려주는데, 그러면 애초에 점유가 없다 와남이 잡고 있다를 구분 못 한다. 그래서 세 가지 값을 돌려주게 짰다. 원자성도 지키고 에러 구분도 살린다.</p>
+<pre><code>private static final RedisScript&lt;Long&gt; RELEASE_IF_OWNER = new DefaultRedisScript&lt;&gt;(&quot;&quot;&quot;
+        local holder = redis.call(&#x27;GET&#x27;, KEYS[1])
+        if holder == false then
+            return -1                       // 키 없음 (미점유 / 만료)
+        elseif holder == ARGV[1] then
+            redis.call(&#x27;DEL&#x27;, KEYS[1])
+            return 1                        // 내 거 -&gt; 삭제
+        else
+            return 0                        // 남의 거
+        end
+        &quot;&quot;&quot;, Long.class);
+</code></pre>
+<p>이제 userA의 늦은 해제가 userB 점유를 날리는 시나리오가 구조적으로 불가능해진다. 스크립트가 도는 순간 holder가 userB면 ARGV(userA)랑 안 맞으니 0을 리턴하고 아무것도 안 지운다.</p>
+<hr/>
+<h1>hold에서의 동시성 문제</h1>
+<p>release를 닫고 나서 hold를 다시 보니, 거기도 동시성 문제가 있었다. 그런데 이번엔 종류가 다른 동시성 문제라 Lua로는 못 닫는다.</p>
+<p>좌석을 잡을 때 저장소를 두 개 거친다.</p>
+<pre><code>// DB: 이 좌석이 이미 팔렸나(RESERVED) 확인
+Seat seat = seatRepository.findById(seatId)...;
+if (seat.getStatus() == SeatStatus.RESERVED) throw ALREADY_RESERVED;
+
+// Redis: 비어있으면 점유
+seatRedisProvider.hold(...);
+</code></pre>
+<p>위엔 MySQL에 묻고 아래는 Redis에 묻는다. 이번엔 서로 다른 두 저장소 사이에서 생긴다.</p>
+<p>위에서 &quot;팔리지 않았네&quot; 확인한 뒤 아래 사이에 그 좌석이 결제 완료되면, 이미 팔린 좌석을 Redis에서 점유해버린다.</p>
+<p>여기가 release랑 결정적으로 다르다. 이건 Lua로 못 고친다.</p>
+<p>Lua는 Redis 안의 명령들만 한 덩어리로 묶는다. MySQL 안까지 손을 못 뻗는다. DB 조회와 Redis SET은 애초에 다른 서버라 하나의 스크립트로 못 묶는다.</p>
+<p>그럼 어떻게 하라고?</p>
+<p>두 개를 합칠 수 없으니 <strong>전략을 바꾼다.</strong> 순서를 뒤집어서 Redis 점유를 먼저 잡고(원자적 게이트라 동시 점유는 여기서 배제됨), 점유를 쥔 상태에서 DB로 &quot;팔렸는지&quot; 검증하고, 아니면 방금 잡은 점유를 <strong>되돌린다(보상)</strong>.</p>
+<pre><code>// 1) Redis 점유 먼저 — 원자적 게이트
+boolean acquired = seatRedisProvider.holdAll(showId, seatIds, userId);
+if (!acquired) throw ALREADY_HELD;
+
+try {
+    // 2) 점유 쥔 상태에서 DB로 판매 여부 검증
+    List&lt;Seat&gt; seats = seatRepository.findAllById(seatIds);
+    if (seats.size() != seatIds.size()) throw SEAT_NOT_FOUND;
+    if (seats.stream().anyMatch(s -&gt; s.getStatus() == RESERVED)) throw ALREADY_RESERVED;
+
+    // 3) 점유 이벤트 발행
+    ...
+} catch (RuntimeException e) {
+    // 검증/발행 실패 → 방금 잡은 점유 전부 되돌린다 (보상)
+    seatIds.forEach(id -&gt; seatRedisProvider.releaseIfOwner(showId, id, userId));
+    throw e;
+}
+</code></pre>
+<p>좌석을 먼저 쥐고 나서 DB를 보니까, 팔렸으면 잡아내서 되돌리고, 안 팔렸으면 이미 내가 게이트를 쥔 상태라 그 사이 남이 못 끼어든다. 덤으로 발행이 실패해도 점유가 안 새고 같이 풀린다.</p>
+<p>솔직히 이건 로직과 로직사이 동시성 문제를 실용적으로 거의 없애보려 한거지 DB와 Redis가 두 저장소라는 사실 자체를 없앤게 아니다.진짜 제대로 할거면 점유 상태까지 한 곳으로 일원화 해야한다고 생각한다. 이건 근데 지금 말고 나중에 진행핼 예정이다.</p>
+<hr/>
+<h1>그럼 DB는 언제 쓸까?</h1>
+<p>여기까지 보면 좌석은 Redis만 쓰는거야? 싶은데 아니다. 역할이 나뉜다.</p>
+<p>DB는 확정된 사실만, Redis는 변동 심한 임시 상태만 맡는다.</p>
+<table><thead><tr><th><strong>단계</strong></th><th><strong>DB(seats)</strong></th><th><strong>Redis(hold)</strong></th></tr></thead><tbody><tr><td>좌석 생성</td><td>INSERT (AVAILABLE)</td><td>—</td></tr><tr><td>좌석 선택 (임시 점유)</td><td>READ (존재/판매 검증)</td><td>SET 5분</td></tr><tr><td>결제 완료 (확정)</td><td>UPDATE → RESERVED</td><td>DEL</td></tr><tr><td>만료/취소</td><td>—</td><td>TTL 만료 / DEL</td></tr></tbody></table>
+<p>임시 점유를 DB가 아니라 Redis로 하는 이유는, 선점이 너무 빈번하고 짧아서다. 예를들어 오픈런 때 수만 명이 좌석을 클릭했다 뗐다 하고 5분 뒤 만료되는데, 이걸 매번 DB에 쓰면 DB가 못 버틴다. Redis는 빠르고 TTL 자동 만료가 공짜다. 그래서 확정 전 임시 상태만 Redis가 맡고, 확정되면 DB로 넘어간다.</p>
+<h2>여러 좌석을 한 번에</h2>
+<p>사람들은 좌석을 한 개만 사지 않는다. &quot;5, 6, 7번 같이, 전부 되거나 전부 안 되거나&quot;로 잡고 싶어 한다. 이걸 순진하게 루프로 돌리면,</p>
+<pre><code class="language-java">for (Long seatId : seatIds) hold(showId, seatId, userId);
+</code></pre>
+<p>5, 6은 됐는데 7이 이미 잡혀있으면 5, 6만 점유된 어정쩡한 상태가 된다. 되돌리려고 5, 6을 푸는 동안 또 동시성 문제가 줄줄이 생긴다.</p>
+<p>그래서 여러 좌석 키를 한 덩어리로 처리한다. release에서 GET/DEL을 한 덩어리로 한 거랑 같은 발상인데, 이번엔 여러 좌석을 묶는다. 전부 비어있나 확인 -&gt; 비어있으면 전부 SET을 Lua로.</p>
+<pre><code class="language-java">private static final RedisScript&lt;Long&gt; HOLD_ALL = new DefaultRedisScript&lt;&gt;(&quot;&quot;&quot;
+    for i = 1, #KEYS do
+        if redis.call(&#x27;EXISTS&#x27;, KEYS[i]) == 1 then
+            return -1                      // 하나라도 점유됨 -&gt; 전부 실패
+        end
+    end
+    for i = 1, #KEYS do
+        redis.call(&#x27;SET&#x27;, KEYS[i], ARGV[1], &#x27;EX&#x27;, tonumber(ARGV[2]))
+    end
+    return 1                               // 전부 점유 성공
+    &quot;&quot;&quot;, Long.class);
+</code></pre>
+<hr/>
+<h1>Redis Cluster에서 멀티 키가 안 되는 이유</h1>
+<p>이 스크립트는 키를 여러 개 건드린다. 그런데 Redis Cluster에서는 이게 그냥 안 된다. 이유를 알아야 한다.</p>
+<p>클러스터는 키 공간을 16384개 슬롯으로 쪼개고, 각 노드가 슬롯 범위를 나눠 갖는다. 키가 어느 슬롯에 가는지는 CRC16(키) % 16384로 정해진다. 그리고 <strong>멀티 키 명령은 모든 키가 같은 슬롯에 있어야</strong> 실행된다. 안 그러면 CROSSSLOT 에러가 난다.</p>
+<p>우리 키 seat:hold:show1:5, seat:hold:show1:6, seat:hold:show1:7은 키 전체를 해싱하니까 셋 다 다른 슬롯에 흩어진다. 클러스터에서 이 스크립트는 바로 CROSSSLOT로 터진다.</p>
+<p><strong>참고</strong></p>
+<p>**Standalone(단일 인스턴스)**에선 어차피 데이터가 한 군데 다 있고, 슬롯이란 개념자체가 없어서 Lua키가 몇 개든 그냥 다 실행된다. 즉 CROSSSLOT 에러가 나지 않는 구조고, hashtag가 없더라도 멀티키 Lua가 잘 된다.</p>
+<p><strong>Sentinel</strong> 에서는 샤딩(데이터 쪼개기)이 아니다. 마스터 1 + replica 몇대 구성에서 마스터가 죽으면 자동으로 복제본을 승격해주는 고가용성 장치이다. 데이터는 마스터에 있고, 슬롯으로 쪼개지 않는다. 쓰기는 항상 마스터한테만 간다. 그래서 이 또한 CROSSSLOT이 안난다. </p>
+<hr/>
+<h1>hash tag란?</h1>
+<p>키에 {...}가 있으면 Redis는 <strong>그 중괄호 안 부분만</strong> 해싱한다. 이걸 hash tag라고 한다. 그래서 키를 이렇게 바꾸면,</p>
+<pre><code>seat:hold:{show1}:5
+seat:hold:{show1}:6   //  셋 다 &#x27;show1&#x27;만 해싱 -&gt; 같은 슬롯
+seat:hold:{show1}:7
+</code></pre>
+<p>같은 공연 좌석들이 한 노드에 모인다. 멀티 좌석 Lua가 클러스터에서도 된다. 지금 단일 Redis라도, 이 멀티 좌석 hold를 쓰는 순간 멀티 키라서, 나중에 클러스터 갈 때 안 깨지려면 키를 지금 이렇게 잡아둬야 한다. 준비용이 아니라 방금 만든 기능 때문에 당장 필요한 거다.</p>
+<pre><code class="language-java">private String holdKey(String showId, Long seatId) {
+    return &quot;seat:hold:&quot; + &quot;{&quot; + showId + &quot;}:&quot; + seatId;
+}
+</code></pre>
+<hr/>
+<h1>테스트 </h1>
+<p>이건 동시성 버그를 막으려고 만든 코드라, 한 번에 하나씩 curl로 치면 증명이 안 된다. 동시에 때려야 한다. 정식 부하 테스트는 뒤 편이고, 여기선 병렬 curl로 동시 요청을 쏴서 결과를 셌다.</p>
+<h2>단일 좌석 동시 점유</h2>
+<p>같은 좌석에 20명이 동시에 hold.</p>
+<pre><code class="language-bash">seq 20 | xargs -P 20 -I{} curl -s -o /dev/null -w &quot;%{http_code}\n&quot; \
+  -X POST .../api/seats/show1/hold \
+  -H &#x27;X-User-Id: user-{}&#x27; -d &#x27;{&quot;seatIds&quot;:[1]}&#x27; | sort | uniq -c
+</code></pre>
+<pre><code>   1 200
+  19 409
+</code></pre>
+<p>20개 중 딱 1개만 통과, 19개는 409(이미 점유). 원자적 게이트가 정확히 한 명만 통과시킨다. (클러스터에서 슬롯 라우팅까지 정상이라는 증거이기도 하다. 안 그랬으면 둘 이상 이겼을 테니까.)</p>
+<h2>여러 좌석 겹침</h2>
+<p>userA가 [5,6,7], userB가 [6,7,8]을 동시에. 6, 7이 겹친다. 결과는 한쪽 200, 한쪽 409. 이긴 쪽이 자기 셋을 전부 가져가고 진 쪽은 전무다. &quot;userA가 5,6,7 잡고 userB가 8만 잡은&quot; 어정쩡한 상태는 안 나온다.</p>
+<h2>이미 팔린 좌석 (보상)</h2>
+<p>DB에서 RESERVED인 좌석을 hold하면 이미 예약된 좌석입니다로 거절된다. 여기서 보상이 도는지 확인하려고 같은 좌석을 두 번 쳐봤다. 두 번째도 이미 예약된 좌석(ALREADY_RESERVED)이 나오면 정상이다. 만약 첫 번째에서 잡은 게이트가 안 풀렸으면 두 번째는 &quot;이미 점유됨&quot;(ALREADY_HELD)이 떠야 하니까. 둘 다 RESERVED가 나왔다 -&gt; 게이트를 잡았다가 보상으로 풀었다는 증명.</p>
+<h2>release 안전성</h2>
+<p>여기서 일이 터졌다. userA가 좌석을 잡고(200), userA 본인이 release하는데 점유 중인 좌석이 아니다 가 나왔다. 잡은 본인이 못 푼다고? 명백히 이상했다. 원인은 내가 만든 거였다. hash tag를 적용할 때 <strong>holdAll의 키만 바꾸고 releaseIfOwner의 키는 안 바꿨다.</strong></p>
+<pre><code>holdAll       → seat:hold:{show1}:3   // (중괄호 O)  &lt;- 여기에 SET
+releaseIfOwner→ seat:hold:show1:3     // (중괄호 X)  &lt;- 여기를 GET (항상 없음)
+</code></pre>
+<p>hold는 중괄호 키에 잡는데 release는 중괄호 없는 다른 키를 보니까, release가 영원히 빈 키를 읽어서 누가 부르든 &quot;점유 아님&quot;이 나온 거다. 테스트로 안 잡았으면 그대로 배포될 뻔했다.</p>
+<p>진짜 원인은 더 깊다. <strong>키를 여러 군데서 따로 만들고 있었다.</strong> holdAll, releaseIfOwner, getHolder… 각자 인라인으로 키 문자열을 조합했다. 그러다 hash tag로 포맷을 바꿀 때 한 곳을 놓친 거다. 키를 처음부터 holdKey() 한 곳에서만 만들었으면 절대 안 터졌을 버그다. 그래서 고치는 김에 <strong>모든 키 생성을 holdKey() 하나로 모았다.</strong></p>
+<pre><code class="language-java">public long releaseIfOwner(String showId, Long seatId, String userId) {
+    Long result = redisTemplate.execute(
+            RELEASE_IF_OWNER, List.of(holdKey(showId, seatId)), userId);   // 같은 holdKey 사용
+    return result == null ? -1 : result;
+}
+</code></pre>
+<p>고치고 다시 돌리니 200 → 403(본인이 선택한 좌석이 아님) → 200. userB는 userA 점유를 못 풀고, userA는 본인 거라 풀린다. release 소유권이 제대로 작동한다.</p>
+<p>배운 건 분명하다. <strong>키처럼 여러 곳에서 쓰는 문자열은 한 곳에서만 만들어야 한다.</strong> 안 그러면 포맷을 바꾸는 순간 어딘가 빠뜨리고, 거기서 결국 문제가 생긴다.</p>
+<hr/>
+<h1>Next</h1>
+<p>이번 편에서 좌석 선점의 Redis 쪽 원자성은 단단하게 만들었다. 남은 건 진행하면서 천천히 정할 생각이다. 뭘 미리 정해놓고 들어가는 게 아니라, 그때그때 필요한 걸 비교해보고 고르는 식으로 해 볼 예정이다.</p>
+<ul>
+<li>멀티 인스턴스 fanout</li>
+<li>좌석 현황 SSE(Server Sent Event)</li>
+</ul></article></div></div>
+  </body>
+</html>

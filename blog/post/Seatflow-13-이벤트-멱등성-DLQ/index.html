@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 13. 이벤트 멱등성 + DLQ | Record, Then Build</title>
+    <meta name="description" content="Intro 11, 12편에서 취소 Saga를 만들면서 컨슈머 실패를 다루는 방식이 계속 걸렸다. 지금까지 컨슈머들은 다 이런 식이었다." />
+    <meta property="og:title" content="[Seatflow] 13. 이벤트 멱등성 + DLQ | Record, Then Build" />
+    <meta property="og:description" content="Intro 11, 12편에서 취소 Saga를 만들면서 컨슈머 실패를 다루는 방식이 계속 걸렸다. 지금까지 컨슈머들은 다 이런 식이었다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-13-%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EB%A9%B1%EB%93%B1%EC%84%B1-DLQ/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-13-%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EB%A9%B1%EB%93%B1%EC%84%B1-DLQ/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 13. 이벤트 멱등성 + DLQ</h1><p>Lab/SeatFlow · 2026-07-15</p><h2>Intro</h2>
+<p>11, 12편에서 취소 Saga를 만들면서 컨슈머 실패를 다루는 방식이 계속 걸렸다. 지금까지 컨슈머들은 다 이런 식이었다.</p>
+<pre><code class="language-java">try {
+    event = kafkaObjectMapper.readValue(message, ...);
+} catch (Exception e) {
+    log.error(&quot;Malformed seat.held skipped: {}&quot;, e.getMessage(), e);
+    return;
+}
+</code></pre>
+<p>메시지가 이상하면 로그만 찍고 버린다. 이게 지금까지는 문제가 안 됐다. 근데 이 방식엔 두 가지 문제가 있다.</p>
+<p>첫번째로는 메시지가 그냥 증발한다. 결제 완료 이벤트가 이 경로로 사라지면 예매가 영원히 PENDING에 남는데, 아무도 그 사실을 모른다.</p>
+<p>두번쨰로는 반대로 예외를 밖으로 던지면 Kafka가 그 메시지를 계속 재전달한다. 그런데 메시지 자체가 깨져있으면(poison message) 재시도해도 계속 같은 이유로 실패한다. 그러면 그 메시지가 파티션에서 안 넘어가고, 뒤에 있는 멀쩡한 메시지들까지 처리가 막힌다.</p>
+<p>증발시키거나, 무한히 막히거나. 둘 다 아니다. 실패한 메시지를 격리해두고, 나머지는 계속 처리되게 하는 게 필요했다. DLQ(Dead Letter Queue)다.</p>
+<p>이번 편에서 DLQ를 도입하면서, 지금까지 흩어져 있던 멱등성 처리 방식도 한 번 정리한다.</p>
+<hr/>
+<h1>지금까지의 멱등성을 모아보면</h1>
+<p>시리즈 전체에서 멱등성을 다룬 방식이 연산의 종류에 따라 갈렸다.</p>
+<table><thead><tr><th><strong>블로그 편</strong></th><th><strong>대상</strong></th><th><strong>연산</strong></th><th><strong>처리</strong></th></tr></thead><tbody><tr><td>6편</td><td>user 회원가입</td><td>INSERT(고빈도, 단건)</td><td>noRollbackFor + saveAndFlush</td></tr><tr><td>9편</td><td>좌석 생성</td><td>INSERT(저빈도, 배치)</td><td>REQUIRES_NEW</td></tr><tr><td>10편</td><td>예매/좌석 확정</td><td>UPDATE(상태 전이)</td><td>도메인 상태 가드</td></tr><tr><td>11, 12편</td><td>Saga 응답</td><td>UPDATE(단계 전이)</td><td>상태 가드(isStarted 등)</td></tr></tbody></table>
+<p>한 가지 방법으로 통일하지 않았다. 생성(INSERT)은 DB 제약이나 트랜잭션 격리로, 상태 전이(UPDATE)는 도메인이 스스로 현재 상태를 보고 판단하는 방식으로 막았다. 연산의 성격이 다르면 막는 지점도 다르다는 게 이 시리즈 내내 반복된 결론이다.</p>
+<p>이번 DLQ는 이 목록에 없던 레이어를 채운다. 지금까지는 전부 처리 성공 이후의 중복을 막는 이야기였다. DLQ는 처리 자체가 실패했을 때의 이야기다.</p>
+<hr/>
+<h1>DLQ를 어디에 붙일까?</h1>
+<p>컨슈머마다 재시도, 격리 로직을 따로 짜면 또 복붙이다. Outbox를 공통 모듈로 묶었던 것과 같은 이유로, 이것도 공통 지점에 넣는 게 맞다. Spring Kafka는 DefaultErrorHandler와 DeadLetterPublishingRecoverer라는 표준 부품을 제공한다. 이 둘을 조합해서 리스너 컨테이너 팩토리 하나에 등록하면, 그 팩토리를 쓰는 모든 @KafkaListener에 공통 적용된다.</p>
+<pre><code class="language-java">@Bean
+public DefaultErrorHandler kafkaErrorHandler(KafkaOperations&lt;String, String&gt; kafkaOperations) {
+    DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(kafkaOperations);
+    FixedBackOff backOff = new FixedBackOff(1000L, 3L);   // 1초 간격 3번 재시도
+    return new DefaultErrorHandler(recoverer, backOff);
+}
+
+@Bean
+public ConcurrentKafkaListenerContainerFactory&lt;String, String&gt; kafkaListenerContainerFactory(
+        ConsumerFactory&lt;String, String&gt; consumerFactory,
+        DefaultErrorHandler kafkaErrorHandler) {
+    ConcurrentKafkaListenerContainerFactory&lt;String, String&gt; factory =
+            new ConcurrentKafkaListenerContainerFactory&lt;&gt;();
+    factory.setConsumerFactory(consumerFactory);
+    factory.setCommonErrorHandler(kafkaErrorHandler);
+    return factory;
+}
+</code></pre>
+<p>각 컨슈머는 아무것도 몰라도 된다. common-kafka 모듈 한 곳에 이 설정을 두면 payment, reservation, seat, auth 전부가 자동으로 적용받는다.</p>
+<p>여기서 재미있는걸 봣는데, DLQ 토픽 이름({원래토픽}.DLT)을 어디서도 지정한 적이 없는데 실제로 그 이름으로 생겼다. DeadLetterPublishingRecoverer의 생성자에 목적지를 정하는 함수를 넘기지 않으면, 라이브러리 내부 기본값(.DLT 접미사, 같은 파티션 번호)이 그대로 쓰인다. 내가 설정한 건 사실 커스터마이즈하지 않겠다는 선택이었던 셈이다.</p>
+<h2>삼키면 에러 핸들러가 개입할 기회 자체가 없다</h2>
+<p>방금 만든 에러 핸들러는 리스너 메서드가 예외를 던져야만 작동한다. 그런데 지금까지 컨슈머들은 역직렬화 실패를 이렇게 처리하고 있었다.</p>
+<pre><code class="language-java">} catch (Exception e) {
+    log.error(&quot;Malformed seat.held skipped: {}&quot;, e.getMessage(), e);
+    return;   // 예외가 밖으로 안 나간다
+}
+</code></pre>
+<p>return으로 끝나면 스프링 입장에서는 이 메시지를 정상 처리한 것으로 본다. 에러 핸들러가 개입할 여지 자체가 없다. 애써 만든 DLQ가 무력화된다.</p>
+<p>그래서 모든 컨슈머의 이 부분을 던지도록 바꿨다.</p>
+<pre><code class="language-java">} catch (Exception e) {
+    log.error(&quot;Malformed seat.held: {}&quot;, e.getMessage());
+    throw new IllegalStateException(&quot;Malformed seat.held&quot;, e);
+}
+</code></pre>
+<p>로그만 남기고 조용히 넘어가던 걸, 재시도 후 DLQ로 격리되도록 바꾼 것이다. 지금까지 만든 컨슈머 십여 개를 전부 이 패턴으로 통일했다.</p>
+<h2>예외지만 던지면 안 되는 경우 </h2>
+<p>컨슈머를 하나씩 고치다가, 이 규칙이 안 통하는 지점을 만났다. 취소 Saga의 명령 컨슈머다.</p>
+<pre><code class="language-java">@KafkaListener(topics = EventTopic.PAYMENT_REFUND_COMMAND, groupId = &quot;payment-service&quot;)
+public void consume(String message) {
+    ...
+    paymentService.executeRefund(...);   // 여기서 예외가 나면?
+}
+</code></pre>
+<p>일반 이벤트 컨슈머는 실패하면 그 이벤트 하나가 DLQ로 격리되고 끝이다. 그런데 이 명령은 다르다. 오케스트레이터(reservation)가 이 명령의 응답을 기다리고 있다. 여기서 예외가 나서 DLQ로 격리되면, 응답 자체가 안 나간다. 오케스트레이터는 영원히 SEAT_RELEASED 같은 중간 상태에 멈춰서 기다린다. Saga가 통째로 멈추는 것이다.</p>
+<p>일반 이벤트와 Saga 명령의 차이가 여기서 갈린다. 일반 이벤트는 실패해도 그 사실을 아는 사람이 없어도 된다(격리해두면 그만이다). Saga 명령은 응답을 기다리는 상대가 있다. 그래서 참여자는 성공이든 실패든 반드시 응답해야 한다.</p>
+<pre><code class="language-java">try {
+    paymentService.executeRefund(command.sagaId(), command.reservationId(), command.refundAmount());
+} catch (Exception e) {
+    // 예상 못한 예외라도 반드시 실패 응답을 보낸다. 그래야 오케스트레이터가 보상을 시작한다.
+    log.error(&quot;Refund execution failed unexpectedly: sagaId={}&quot;, command.sagaId(), e);
+    outboxAppender.append(EventTopic.PAYMENT_REFUND_FAILED, SOURCE,
+            String.valueOf(command.reservationId()),
+            new PaymentRefundFailedEvent(
+                    command.sagaId(), command.reservationId(), &quot;내부 오류: &quot; + e.getMessage()));
+}
+</code></pre>
+<p>단, 역직렬화 실패(메시지에서 sagaId조차 못 읽는 경우)는 다르다. 이때는 누구에게 응답해야 할지 특정할 수조차 없으니, 이 경우만 예외로 던져 DLQ로 보낸다.</p>
+<pre><code class="language-bash">sagaId를 못 읽음(역직렬화 실패)  -&gt; DLQ로 (응답할 대상 자체가 없음)
+sagaId는 아는데 처리가 실패함   -&gt; 반드시 실패 응답 발행 (Saga가 보상하도록)
+</code></pre>
+<h2>보상마저 실패하면 어떻게하지?</h2>
+<p>이 원칙을 끝까지 따라가면 한 군데서 막힌다. 취소 Saga의 마지막 단계, 환불 실패로 좌석을 다시 점유시키는 보상 명령이다.</p>
+<pre><code class="language-java">try {
+    seatService.reserveSeatForCompensation(...);
+} catch (Exception e) {
+    // 보상의 보상은 없다. 실패하면 CancelSaga가 COMPENSATING에 멈춘 채로 남는다.
+    log.error(&quot;Seat compensation reserve failed unexpectedly: sagaId={}&quot;, command.sagaId(), e);
+}
+</code></pre>
+<p>여기서 실패하면 보낼 다음 응답이 없다. 보상을 보상할 수는 없기 때문이다. 이 경우는 예외를 삼키고 로그만 남긴다. CancelSaga는 COMPENSATING 상태로 멈춘 채 남고, 이건 자동으로 복구되지 않는 실패로 취급한다.</p>
+<p>모든 실패를 자동으로 되돌릴 수는 없다는 걸 이번에 확인했다. Saga의 보상 체인 끝에는 항상 이 이상은 사람이 봐야 한다는 지점이 있다. DLQ와 응답 보장으로 자동 복구 범위를 최대한 넓히더라도, 어딘가에는 그 경계가 남는다.</p>
+<hr/>
+<h1>테스트</h1>
+<p>일부러 JSON이 아닌 메시지를 seat.held 토픽에 직접 넣어봤다.</p>
+<pre><code class="language-bash">kafka-ui -&gt; Topics -&gt; seat.held -&gt; Produce Message
+Value: JSON이 아닌 이상한거로 시도
+</code></pre>
+<p>reservation 로그에 파싱 실패가 몇 차례 반복해서 찍혔다. 설정한 대로 1초 간격으로 재시도한 흔적이다. 그리고 곧 조용해졌다.</p>
+<p>seat.held.DLT라는 토픽이 새로 생겼고, 그 안에 메시지가 들어와 있었다. 헤더를 열어보면 원인이 그대로 남아있다.</p>
+<pre><code class="language-bash">kafka_dlt-original-topic: seat.held
+kafka_dlt-original-offset: 6
+kafka_dlt-exception-message: Malformed seat.held
+kafka_dlt-exception-stacktrace: ... Caused by: JsonParseException: Unrecognized token &#x27;이건&#x27; ...
+</code></pre>
+<p>여기서 확인하고 싶었던 건 두 가지였다. 하나는 이 메시지가 DLQ로 격리되는지, 다른 하나는 그 뒤로 정상 메시지가 계속 처리되는지다. 곧바로 다른 좌석을 하나 더 hold해봤다.</p>
+<pre><code class="language-bash">curl -X POST http://&lt;ingress&gt;/api/seats/&lt;showId&gt;/hold \
+  -H &#x27;X-User-Id: u2&#x27; -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;seatIds&quot;:[12]}&#x27;
+</code></pre>
+<p>정상적으로 예매가 PENDING으로 생겼다. poison message 하나가 격리된 뒤에도 컨슈머는 멈추지 않고 다음 메시지를 계속 처리했다.</p>
+<h2>DLQ로 넘어간 다음엔 아무 일도 안 일어난다</h2>
+<p>테스트하면서 헷갈렸던 지점이 있다. DLQ로 넘어가면 뭔가 계속 재시도하거나 알림이 갈 거라고 생각했는데, 전혀 그렇지 않았다.</p>
+<p>DLQ에 격리되는 순간 원래 토픽의 offset이 커밋되고, 그걸로 끝이다. 그 메시지에 대해서는 더 이상 아무 일도 일어나지 않는다.</p>
+<p>이건 의도된 설계다. poison message는 자동으로 재시도해봤자 또 실패한다(JSON이 아닌 걸 아무리 다시 파싱해도 안 된다). 자동 재처리를 붙이면 무한 루프가 될 수 있다. 그래서 DLQ는 격리까지만 자동화하고, 실제 원인 판단과 재처리는 사람이 하도록 열어둔다.</p>
+<pre><code class="language-bash">1. DLQ 메시지의 헤더(exception-message, stacktrace)로 원인 확인
+2. 판단
+   - 메시지 자체가 깨짐 -&gt; 재처리 대상 아님, 발행 쪽 코드/스키마 조사
+   - 일시적 장애로 보임 -&gt; payload를 원래 토픽에 수동으로 다시 발행
+   - 로직 버그 -&gt; 코드 수정 후 재발행
+</code></pre>
+<p>이번 테스트는 완전히 깨진 텍스트라 극단적인 예시였다. 실제로 더 흔한 poison message는 이벤트 스키마가 바뀌는 과도기(필드가 추가된 새 코드가, 그 필드가 없는 옛 메시지를 받는 경우)나 롤링 배포 중 버전 불일치, 혹은 역직렬화가 아니라 처리 로직 자체에서 나는 예외(DB 커넥션 문제 등)일 것이다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>지금까지의 멱등성은 전부 처리 성공 이후의 중복을 막는 이야기였다(INSERT는 DB 제약, UPDATE는 도메인 상태 가드). DLQ는 처리 자체의 실패를 다룬다.</li>
+<li>공통 에러 핸들러(DefaultErrorHandler + DeadLetterPublishingRecoverer) 하나로 모든 서비스, 모든 컨슈머에 재시도와 DLQ 격리가 적용된다. 컨슈머는 예외를 삼키지 않고 던지기만 하면 된다.</li>
+<li>일반 이벤트 컨슈머는 실패 시 DLQ로 격리해도 되지만, Saga 명령 컨슈머는 응답을 기다리는 상대(오케스트레이터)가 있어 반드시 성공이든 실패든 응답을 보내야 한다. 역직렬화 실패(sagaId조차 모름)만 예외로 DLQ로 보낸다.</li>
+<li>보상 체인의 끝(보상의 보상이 없는 지점)은 자동 복구가 불가능하다. 실패하면 예외를 삼키고 로그로 남겨, 개발자가 개입해야 하는 지점으로 남긴다.</li>
+<li>DLQ는 격리까지만 자동화한다. 재처리는 의도적으로 자동화하지 않았다. poison message 같은 경우엔 재시도해도 또 실패하므로, 자동 재처리는 무한 루프의 위험이 있다.</li>
+<li>결국 이번 편에서 새로 짠 코드는 몇 줄 되지 않는다. 재시도, DLQ 발행, 오프셋 관리 모두 Spring Kafka가 이미 구현해둔 것이다. 이번에 한 일은 그 부품을 내 상황(공통 팩토리, Saga 명령의 예외적 처리)에 맞게 정확히 연결한 것에 가깝다.</li>
+</ul>
+<hr/>
+<h1>NEXT</h1>
+<p>멱등성과 실패 처리를 정리했으니, 다음은 API Gateway다. 지금까지 각 서비스가 X-User-Id 헤더를 그대로 신뢰하고 있었는데, 이 인증을 Gateway에서 실제로 검증하는 구조로 바꾼다. 뭐가 맞는진 모르겠지만 그냥 우선난 API Gateway에서 1차 검증을 한 뒤에 2차 검증으로도 스프링 시큐리티를 활용해보려고 한다.</p></article></div></div>
+  </body>
+</html>

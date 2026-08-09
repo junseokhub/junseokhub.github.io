@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 03. GitOps 파이프라인 Helm Chart + Jenkins + ArgoCD | Record, Then Build</title>
+    <meta name="description" content="Intro 코드를 작성하고 푸시하면 자동으로 K8s에 배포되는 구조를 만들었다. 이번 편에서는 그 파이프라인 전체를 다룬다.  " />
+    <meta property="og:title" content="[Seatflow] 03. GitOps 파이프라인 Helm Chart + Jenkins + ArgoCD | Record, Then Build" />
+    <meta property="og:description" content="Intro 코드를 작성하고 푸시하면 자동으로 K8s에 배포되는 구조를 만들었다. 이번 편에서는 그 파이프라인 전체를 다룬다.  " />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-03-GitOps-%ED%8C%8C%EC%9D%B4%ED%94%84%EB%9D%BC%EC%9D%B8-Helm-Chart-Jenkins-ArgoCD/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-03-GitOps-%ED%8C%8C%EC%9D%B4%ED%94%84%EB%9D%BC%EC%9D%B8-Helm-Chart-Jenkins-ArgoCD/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 03. GitOps 파이프라인 Helm Chart + Jenkins + ArgoCD</h1><p>Lab/SeatFlow · 2026-06-11</p><h1>Intro</h1>
+<p>코드를 작성하고 푸시하면 자동으로 K8s에 배포되는 구조를 만들었다. 이번 편에서는 그 파이프라인 전체를 다룬다.<br/>
+이미 기존에 GitOps 방식은 개인서버에서도 사용하고 있었기 떄문에 크게 어려움은 없었다.</p>
+<p>간단하게 설명하자면, 크게 세 가지다. Helm Chart로 배포 명세를 관리하고, Jenkins가 이미지를 빌드해서 레지스트리에 올리고, ArgoCD Image Updater가 변경을 감지해서 ArgoCD가 K8s에 배포한다.</p>
+<hr/>
+<h1>전체 흐름</h1>
+<pre><code>git push (seatflow-msa)
+    |
+Jenkins
+    변경된 서비스 감지
+    Gradle 빌드
+    Docker 이미지 빌드 (ARM64)
+    GHCR push (tag: git-sha 앞 7자리)
+    |
+ArgoCD Image Updater
+    GHCR 새 이미지 digest 감지
+    deploy-manifests 레포 values.yaml image.tag 업데이트
+    git commit + push
+    |
+ArgoCD
+    deploy-manifests 레포 변경 감지
+    K8s sync → 배포
+</code></pre>
+<p>코드 레포(<code>seatflow-msa</code>)와 매니페스트 레포(<code>deploy-manifests</code>)를 분리했다. 코드 레포에는 코드만, 매니페스트 레포에는 Helm Chart만 있다. 이게 GitOps의 핵심이다. 모든 인프라 상태가 Git에 기록된다.</p>
+<hr/>
+<h1>레포 구조</h1>
+<h2>코드 레포 (seatflow-msa)</h2>
+<pre><code>seatflow-msa/
+ㄴ Jenkinsfile
+ㄴ services/
+   ㄴ show-service/
+      ㄴ Dockerfile
+      ㄴ .dockerignore
+      ㄴ src/
+   ㄴ ...
+ㄴ libs/
+    ㄴ common-web/
+</code></pre>
+<h2>매니페스트 레포 (deploy-manifests)</h2>
+<pre><code>deploy-manifests/
+ㄴ seatflow/
+   ㄴ charts/
+       ㄴ show-service/
+          ㄴ Chart.yaml
+          ㄴ values.yaml
+          ㄴ templates/
+              ㄴ deployment.yaml
+              ㄴ service.yaml
+              ㄴ ingress.yaml
+       ㄴ auth-service/
+       ㄴ ...
+ㄴ argocd/
+    ㄴ seatflow-applicationset.yaml
+    ㄴ app-of-apps/
+        ㄴ root-app.yaml
+        ㄴ apps/
+</code></pre>
+<hr/>
+<h1>Helm Chart 구성</h1>
+<h2>ApplicationSet vs App of Apps</h2>
+<p>ArgoCD에서 여러 서비스를 관리하는 방법은 크게 두 가지다.</p>
+<p><strong>App of Apps</strong>: 루트 Application 하나가 나머지 Application들을 관리한다. 각 서비스마다 Application yaml 파일을 직접 작성한다. 서비스별로 세밀한 설정이 가능하지만 파일이 늘어난다.</p>
+<p><strong>ApplicationSet</strong>: 하나의 리소스로 여러 Application을 템플릿 기반으로 생성한다. 서비스 추가 시 <code>elements</code>에 한 줄만 추가하면 된다. 서비스 구조가 동일할 때 유리하다.</p>
+<p>seatflow는 6개 서비스 구조가 거의 동일해서 ApplicationSet을 선택했다.</p>
+<pre><code class="language-yaml">apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: seatflow
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          - service: show-service
+          - service: auth-service
+          - service: user-service
+          - service: reservation-service
+          - service: seat-service
+          - service: payment-service
+  template:
+    metadata:
+      name: &#x27;seatflow-{{service}}&#x27;
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/&lt;YOUR_GITHUB&gt;/deploy-manifests
+        targetRevision: master
+        path: &#x27;seatflow/charts/{{service}}&#x27;
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: seatflow
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+</code></pre>
+<p><code>{{service}}</code>가 각 element의 값으로 치환된다. <code>kubectl apply -f seatflow-applicationset.yaml -n argocd</code> 한 번으로 6개 Application이 자동 생성된다.</p>
+<h2>values.yaml</h2>
+<p>서비스마다 다른 값들을 정의한다. 이미지 태그, 포트, 환경변수 키 목록이 핵심이다.</p>
+<pre><code class="language-yaml">replicaCount: 1
+
+image:
+  repository: ghcr.io/&lt;YOUR_GITHUB&gt;/seatflow-show-service
+  tag: 1.0.1
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ghcr-secret
+
+namespace: seatflow
+appName: show-service
+
+containerPort: 8086
+managementPort: 9086
+
+service:
+  type: ClusterIP
+  port: 8086
+
+nodeSelector:
+  kubernetes.io/arch: arm64 // oci arm서버에 올릴거라 arm 명시 필수
+
+resources:
+  requests:
+    cpu: &quot;50m&quot;
+    memory: &quot;256Mi&quot;
+  limits:
+    cpu: &quot;500m&quot;
+    memory: &quot;512Mi&quot;
+
+deployment:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+secretName: show-service-secret
+
+envKeys:
+  - SPRING_DATA_MONGODB_URI
+
+ingress:
+  enabled: false
+  path: /api/shows
+</code></pre>
+<p><code>envKeys</code>가 중요하다. <code>application.yml</code>을 이미지에 포함하지 않고, 모든 설정을 K8s Secret에서 환경변수로 주입받는다. <code>envKeys</code>에 나열된 키들이 Secret에서 읽혀서 컨테이너 환경변수로 주입된다.</p>
+<h2>deployment.yaml</h2>
+<pre><code class="language-yaml">containers:
+  - name: {{ .Values.appName }}
+    image: &quot;{{ .Values.image.repository }}:{{ .Values.image.tag }}&quot;
+    env:
+      - name: SERVER_PORT
+        value: &quot;{{ .Values.containerPort }}&quot;
+      - name: MANAGEMENT_SERVER_PORT
+        value: &quot;{{ .Values.managementPort }}&quot;
+      {{- range .Values.envKeys }}
+      - name: {{ . }}
+        valueFrom:
+          secretKeyRef:
+            name: {{ $.Values.secretName }}
+            key: {{ . }}
+      {{- end }}
+    livenessProbe:
+      httpGet:
+        path: /actuator/health/liveness
+        port: {{ .Values.managementPort }}
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /actuator/health/readiness
+        port: {{ .Values.managementPort }}
+      initialDelaySeconds: 30
+      periodSeconds: 5
+      failureThreshold: 5
+</code></pre>
+<p><code>SERVER_PORT</code>와 <code>MANAGEMENT_SERVER_PORT</code>는 <code>values.yaml</code>에서 직접 주입한다. Secret이 아니라 values에서 가져오는 이유는 포트는 민감 정보가 아니고, 서비스마다 다른 값이 <code>values.yaml</code>에 이미 정의되어 있기 때문이다.</p>
+<h2>Pod Anti-Affinity</h2>
+<pre><code class="language-yaml">affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - {{ .Values.appName }}
+          topologyKey: kubernetes.io/hostname
+</code></pre>
+<p><code>preferredDuringScheduling</code>은 강제가 아니라 선호다. 같은 앱의 Pod가 같은 노드에 배치되는 것을 피하되, 불가능하면 무시한다. 처음부터 분산 배치되도록 설정해두었다.</p>
+<hr/>
+<h1>Jenkins 파이프라인</h1>
+<h2>설계</h2>
+<p><strong>모노레포 변경 감지</strong>: 푸시할 때마다 6개 서비스 전부 빌드하면 낭비다. <code>git diff</code>로 변경된 서비스만 빌드한다.</p>
+<pre><code class="language-groovy">stage(&#x27;Detect Changes&#x27;) {
+  steps {
+    script {
+      def changedFiles = sh(
+        script: &#x27;git diff --name-only HEAD~1 HEAD&#x27;,
+        returnStdout: true
+      ).trim()
+
+      env.BUILD_SHOW        = changedFiles.contains(&#x27;services/show-service&#x27;) ? &#x27;true&#x27; : &#x27;false&#x27;
+      env.BUILD_AUTH        = changedFiles.contains(&#x27;services/auth-service&#x27;) ? &#x27;true&#x27; : &#x27;false&#x27;
+      // ...
+    }
+  }
+}
+
+stage(&#x27;Build show-service&#x27;) {
+  when { environment name: &#x27;BUILD_SHOW&#x27;, value: &#x27;true&#x27; }
+  // ...
+}
+</code></pre>
+<p><code>services/show-service</code> 하위 파일이 변경됐을 때만 해당 stage가 실행된다.</p>
+<p><strong>ARM64 빌드</strong>: K8s Worker 노드가 OCI ARM A1이다. Jenkins 빌드 Pod 자체를 ARM 노드에서 띄우면 별도 크로스 컴파일 설정 없이 ARM 이미지가 나온다.</p>
+<pre><code class="language-yaml">spec:
+  nodeSelector:
+    kubernetes.io/arch: arm64
+</code></pre>
+<p>x86에서 ARM 이미지를 빌드하려면 QEMU가 필요하고 복잡해진다. 빌드 Pod를 ARM에서 띄우는 게 훨씬 단순하다.</p>
+<p><strong>Layered JAR</strong>: Spring Boot Layered JAR을 활용해 Docker 레이어 캐싱을 최적화한다. 코드만 바뀌면 <code>application/</code> 레이어만 다시 빌드되고 나머지는 캐시에서 가져온다.</p>
+<pre><code class="language-dockerfile">FROM eclipse-temurin:21-jre AS builder
+WORKDIR /app
+COPY build/libs/*.jar app.jar
+RUN java -Djarmode=layertools -jar app.jar extract
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=builder /app/dependencies/ ./
+COPY --from=builder /app/spring-boot-loader/ ./
+COPY --from=builder /app/snapshot-dependencies/ ./
+COPY --from=builder /app/application/ ./
+
+ENTRYPOINT [&quot;java&quot;, &quot;org.springframework.boot.loader.launch.JarLauncher&quot;]
+</code></pre>
+<h2>Pod 구성</h2>
+<p>빌드 Pod에 컨테이너가 두 개 있다.</p>
+<ul>
+<li><code>jdk</code>: Gradle 빌드 담당. <code>./gradlew :services:show-service:bootJar</code></li>
+<li><code>buildkitd</code>: Docker 이미지 빌드 + GHCR push 담당</li>
+</ul>
+<p>Jenkins는 이미지 빌드까지만 한다. 매니페스트 레포는 건드리지 않는다.</p>
+<hr/>
+<h1>ArgoCD Image Updater</h1>
+<h2>CRD 방식 (v1.1.1+)</h2>
+<p>ArgoCD Image Updater v1.1.1부터 어노테이션 방식 대신 CRD 방식으로 변경됐다.</p>
+<pre><code class="language-yaml">apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: seatflow-show-service
+  namespace: argocd
+spec:
+  applicationRefs:
+    - namePattern: seatflow-show-service
+      images:
+        - alias: app
+          imageName: ghcr.io//seatflow-show-service
+          commonUpdateSettings:
+            updateStrategy: alphabetical
+      writeBackConfig:
+        method: git
+        gitConfig:
+          branch: master
+</code></pre>
+<p><strong>이미지 태그 전략</strong>: Jenkins에서 <code>IMAGE_TAG = &quot;${env.GIT_COMMIT[0..6]}&quot;</code>으로 git commit sha 앞 7자리를 태그로 사용한다. <code>abc1234</code> 같은 형식이라 버전 숫자 비교가 불가능하다. 어떤 커밋이 배포됐는지 바로 추적할 수 있다는 장점이 있다.</p>
+<p><strong>updateStrategy</strong></p>
+<p><strong>semver</strong></p>
+<ul>
+<li>태그를 시맨틱 버전(1.0.0, 2.1.3)으로 인식해서 가장 높은 버전으로 업데이트</li>
+<li>1.0.x 형식 태그에 적합</li>
+<li>git-sha 태그엔 사용 불가</li>
+</ul>
+<p><strong>digest</strong></p>
+<ul>
+<li>태그는 그대로, 이미지 내용(sha256 digest)이 바뀌면 업데이트</li>
+<li>latest 같은 고정 태그에 새 이미지를 계속 덮어쓰는 방식에 적합</li>
+<li>git-sha처럼 매번 새 태그 생기는 방식엔 부적합</li>
+</ul>
+<p><strong>alphabetical</strong></p>
+<ul>
+<li>태그 이름을 알파벳/사전순으로 비교해서 가장 마지막 태그로 업데이트</li>
+<li>abc, bcd, xyz 순서로 비교</li>
+<li>git-sha 태그는 사전순이 시간순과 다를 수 있어서 <strong>부정확할 수 있음</strong></li>
+</ul>
+<p><strong>newest-build</strong></p>
+<ul>
+<li>이미지 빌드 타임스탬프 기준으로 가장 최근에 빌드된 이미지로 업데이트</li>
+<li>태그 형식 무관</li>
+<li>GHCR Private 레포에서 타임스탬프 메타데이터를 못 읽는 경우가 있음</li>
+</ul>
+<p><strong>writeBackTarget</strong>: <code>helmvalues:</code> 접두사로 Helm values 파일의 특정 키를 지정한다. Image Updater가 <code>deploy-manifests</code> 레포의 <code>values.yaml</code>에서 <code>image.tag</code> 값을 새 태그로 교체하고 자동으로 커밋한다. ArgoCD가 이 커밋을 감지해서 K8s에 sync한다.</p>
+<hr/>
+<h2>Jenkins Pipeline에서  직접 Manifests 수정 방식으로 전환</h2>
+<p>Image Updater를 어느 정도 써보고 나서 Jenkins에서 직접 <code>values.yaml</code>을 수정하는 방식으로 전환했다.</p>
+<p><strong>Image Updater 방식 문제점</strong></p>
+<ul>
+<li>v1.1.x에서 <code>writeBackTarget</code> 경로 설정이 까다로움</li>
+<li><code>manifestTargets</code> 누락 시 <code>.argocd-source-</code> 파일로 fallback되어 <code>values.yaml</code>에 반영 안 됨</li>
+<li>git-sha 태그 방식과 전략(semver/digest/alphabetical) 궁합 맞추기 번거로움</li>
+<li>파이프라인 흐름이 Jenkins → GHCR → Image Updater → ArgoCD로 분산되어 추적이 불편</li>
+</ul>
+<p><strong>Jenkins 직접 방식</strong></p>
+<pre><code class="language-groovy">stage(&#x27;Update Manifest&#x27;) {
+  steps {
+    withCredentials([usernamePassword(credentialsId: &#x27;&#x27;, ...)]) {
+      sh &quot;&quot;&quot;
+        git clone https://...@github.com/${repo}
+        sed -i &#x27;s|tag:.*|tag: ${IMAGE_TAG}|&#x27; /tmp/${repo}/seatflow/charts/${svc}/values.yaml
+        git commit -m &quot;build: [seatflow - ${svc}] update image tags to ${IMAGE_TAG}&quot;
+        git push
+      &quot;&quot;&quot;
+    }
+  }
+}
+</code></pre>
+<p><strong>장단점 비교</strong></p>
+<table><thead><tr><th> </th><th>Image Updater</th><th>Jenkins 직접</th></tr></thead><tbody><tr><td>파이프라인 흐름</td><td>분산 (추적 어려움)</td><td>한 곳에서 관리</td></tr><tr><td>설정 복잡도</td><td>CRD + 전략 설정 필요</td><td>단순한 git 명령어</td></tr><tr><td>버전 의존성</td><td>버전마다 동작 방식 변경</td><td>없음</td></tr><tr><td>실시간성</td><td>1분 간격 폴링</td><td>빌드 즉시 반영</td></tr></tbody></table>
+<hr/>
+<h1>K8s Secret 관리</h1>
+<p><code>application.yml</code>을 이미지에 포함하지 않는다. 모든 설정은 K8s Secret에서 환경변수로 주입받는다.</p>
+<pre><code class="language-bash">kubectl create secret generic show-service-secret \
+  --from-literal=SPRING_DATA_MONGODB_URI=&quot;mongodb://...&quot; \
+  -n seatflow
+</code></pre>
+<p>JPA 서비스는 DB 연결 정보 외에 드라이버, Dialect 등도 환경변수로 넣어야 한다. <code>application.yml</code> 없이 Spring Boot가 뜨려면 JPA auto-configuration이 필요로 하는 설정이 전부 환경변수로 있어야 한다.</p>
+<pre><code class="language-bash">kubectl create secret generic payment-service-secret \
+  --from-literal=SPRING_DATASOURCE_URL=&quot;jdbc:mysql://...&quot; \
+  --from-literal=SPRING_DATASOURCE_USERNAME=&quot;...&quot; \
+  --from-literal=SPRING_DATASOURCE_PASSWORD=&quot;...&quot; \
+  --from-literal=SPRING_DATASOURCE_DRIVER_CLASS_NAME=&quot;com.mysql.cj.jdbc.Driver&quot; \
+  --from-literal=SPRING_JPA_HIBERNATE_DDL_AUTO=&quot;validate&quot; \
+  --from-literal=SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT=&quot;org.hibernate.dialect.MySQLDialect&quot; \
+  --from-literal=SPRING_THREADS_VIRTUAL_ENABLED=&quot;true&quot; \
+  --from-literal=SERVER_SHUTDOWN=&quot;graceful&quot; \
+  --from-literal=SPRING_KAFKA_BOOTSTRAP_SERVERS=&quot;...&quot; \
+  -n seatflow
+</code></pre>
+<p>Secret은 Git에 올리지 않는다. K8s 클러스터에만 존재한다.</p>
+<hr/>
+<h1>결과</h1>
+<pre><code class="language-bash">$ kubectl get pods -n seatflow -o wide
+NAME                                   READY   STATUS    NODE
+auth-service-xxx                       1/1     Running   worker-node
+payment-service-xxx                    1/1     Running   worker-node
+reservation-service-xxx                1/1     Running   worker-node2
+seat-service-xxx                       1/1     Running   worker-node
+show-service-xxx                       1/1     Running   worker-node2
+user-service-xxx                       1/1     Running   worker-node
+</code></pre>
+<p>6개 서비스 전부 Running. Anti-Affinity 덕분에 두 ARM 노드에 분산 배치됐다.</p>
+<p>현재 나의 서버에서는 DeScheduler도 있기 때문에 두 방식이 서로 상호 보완될 것으로 보인다.</p>
+<hr/>
+<h1>Ingress 세팅</h1>
+<p>내 개인 서버에 nginx ingress controller가 이미 클러스터에 설치되어 있어서 별도 설치 없이 바로 사용했다.</p>
+<pre><code class="language-bash">kubectl get svc -n nginx-ingress
+# nginx-ingress-ingress-nginx-controller   LoadBalancer   192.168.0.250   80:32337/TCP,443:31062/TCP
+</code></pre>
+<p>서비스마다 LoadBalancer를 붙이는 대신 Ingress 하나로 path 기반 라우팅을 구성했다. MetalLB IP를 아끼고 관리 포인트를 줄이기 위해서다.</p>
+<pre><code class="language-yaml">apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: seatflow-ingress
+  namespace: seatflow
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api/shows
+            pathType: Prefix
+            backend:
+              service:
+                name: show-service
+                port:
+                  number: 8086
+          - path: /api/users
+            pathType: Prefix
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 8082
+          # 나머지 서비스 동일한 패턴
+</code></pre>
+<p><code>kubernetes.io/ingress.class</code> 어노테이션 방식은 deprecated되었고 <code>spec.ingressClassName</code>을 사용해야 한다.</p>
+<p>테스트:</p>
+<pre><code class="language-bash">curl http://192.168.0.250/api/users/3
+# {&quot;success&quot;:true,&quot;data&quot;:{&quot;id&quot;:3,&quot;email&quot;:&quot;test@test.com&quot;,...}}
+</code></pre>
+<p>이제 기본적인 CI/CD 구성은 끝냈다. 추후에는 manifests와 secret에 env값 추가나 배포 상태만 계속 확인하면 될 것으로 생각된다.</p>
+<hr/>
+<h1>Next</h1>
+<p>auth-service, user-service 도메인 구현</p></article></div></div>
+  </body>
+</html>

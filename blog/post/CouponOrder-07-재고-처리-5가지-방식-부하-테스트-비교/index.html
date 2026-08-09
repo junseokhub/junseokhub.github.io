@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 07. 재고 처리 5가지 방식 부하 테스트 비교 | Record, Then Build</title>
+    <meta name="description" content="Intro 6편에서 주문 API를 설계하고 5가지 재고 처리 방식을 구현했다.  " />
+    <meta property="og:title" content="[Coupon&amp;Order] 07. 재고 처리 5가지 방식 부하 테스트 비교 | Record, Then Build" />
+    <meta property="og:description" content="Intro 6편에서 주문 API를 설계하고 5가지 재고 처리 방식을 구현했다.  " />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-07-%EC%9E%AC%EA%B3%A0-%EC%B2%98%EB%A6%AC-5%EA%B0%80%EC%A7%80-%EB%B0%A9%EC%8B%9D-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EB%B9%84%EA%B5%90/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-07-%EC%9E%AC%EA%B3%A0-%EC%B2%98%EB%A6%AC-5%EA%B0%80%EC%A7%80-%EB%B0%A9%EC%8B%9D-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EB%B9%84%EA%B5%90/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 07. 재고 처리 5가지 방식 부하 테스트 비교</h1><p>Lab/Coupon&amp;Order · 2026-04-29</p><h1>Intro</h1>
+<p>6편에서 주문 API를 설계하고 5가지 재고 처리 방식을 구현했다.<br/>
+이번 편에서는 실제로 부하를 때려보고 각 방식이 얼마나 다르게 동작하는지 확인한다.<br/>
+테스트 환경은 MacBook M4 Pro 로컬이다. 서버, DB, Redis, Kafka 모두 같은 네트워크 안에 있어서 실제 프로덕션 환경과는 다르지만, 방식 간 상대적인 차이를 비교하기엔 충분하다.</p>
+<hr/>
+<h1>테스트 환경</h1>
+<p><strong>서버</strong>: Spring Boot 4.0.5 + WebFlux (Netty), Java 21
+<strong>DB</strong>: MySQL + R2DBC (로컬)
+<strong>Cache</strong>: Redis Cluster (3노드)
+<strong>Message Queue</strong>: Kafka (쿠버네티스, 브로커 3개)
+<strong>부하 도구</strong>: k6 v1.7.1
+<strong>상품 재고</strong>: 10,000개
+<strong>유저 수</strong>: 1,000명 (사전 생성)</p>
+<h2>k6 시나리오</h2>
+<pre><code class="language-js">export const options = {
+    stages: [
+        { duration: &#x27;30s&#x27;, target: 100 },   // 램프업
+        { duration: &#x27;60s&#x27;, target: 500 },   // 유지
+        { duration: &#x27;10s&#x27;, target: 0 },     // 램프다운
+    ],
+};
+</code></pre>
+<p>setup()에서 1,000명이 미리 로그인해서 토큰을 받아두고, 각 VU가 토큰을 돌려 쓰면서 <code>/api/orders</code>에 주문 요청을 계속 날리는 방식이다.</p>
+<hr/>
+<h1>테스트 전 준비</h1>
+<p>매 테스트마다 공정한 비교를 위해 초기화가 필요하다.</p>
+<pre><code class="language-sql">UPDATE products SET stock = 10000, version = 0 WHERE id = 1;
+</code></pre>
+<p>그리고 DataInitializer로 orders, coupon_issues 테이블과 Redis 재고를 초기화한다.</p>
+<pre><code class="language-yml">app:
+  data-init:
+    enabled: true
+</code></pre>
+<p>재시작 -&gt; 초기화 확인 -&gt; <code>enabled: false</code>로 다시 재시작 -&gt; k6 실행.</p>
+<hr/>
+<h1>Kafka 구현 변경 사항</h1>
+<p>6편에서 Kafka는 단순히 &quot;주문 요청을 토픽에 발행하고 Consumer가 순차적으로 처리한다&quot;는 계획이었다. 그런데 막상 구현하면서 문제가 생겼다.</p>
+<p>다른 방식들은 전부 요청 -&gt; 처리 -&gt; 응답이 동기적으로 이루어진다. 비관적 락이든 Redis Lua든 처리가 완료된 후에 응답을 준다. 그런데 Kafka 비동기 방식은 토픽에 발행하고 즉시 응답한다. 실제 재고 차감과 주문 저장은 Consumer가 백그라운드에서 처리한다.</p>
+<p>이 상태로 비교하면 공정하지 않다고 판단했다. 처리 결과도 모르면서 즉시 응답하는 방식이 처리량이 높게 나오는 건 당연하다.</p>
+<p>그래서 두 가지로 분리했다. WebFlux 환경이라 reactor-kafka의 KafkaSender와 KafkaReceiver를 사용했다.</p>
+<p><strong>KAFKA_ASYNC</strong>: 발행 후 즉시 응답. WebFlux의 논블로킹 철학과 가장 잘 맞는 패턴이다.</p>
+<pre><code class="language-java">return Mono.fromCallable(() -&gt; objectMapper.writeValueAsString(message))
+        .flatMap(payload -&gt; {
+            SenderRecord&lt;String, String, String&gt; record = SenderRecord.create(
+                    new ProducerRecord&lt;&gt;(&quot;order-requests&quot;, correlationId, payload),
+                    correlationId
+            );
+            return kafkaSender.send(Mono.just(record))
+                    .next()
+                    .thenReturn(Order.pending(userId, productId, couponIssueId));
+        });
+</code></pre>
+<p><strong>KAFKA_SYNC</strong>: 발행 후 Consumer가 처리를 완료할 때까지 대기. correlationId로 요청과 응답을 매칭한다. 다른 동기 방식들과 공정하게 비교하기 위한 방식이다.</p>
+<pre><code class="language-java">// KafkaSyncOrderService
+return Mono.&lt;Order&gt;create(sink -&gt; {
+            pendingOrders.put(correlationId, sink);
+
+            SenderRecord&lt;String, String, String&gt; record = SenderRecord.create(
+                    new ProducerRecord&lt;&gt;(&quot;order-requests&quot;, correlationId, payload),
+                    correlationId
+            );
+            kafkaSender.send(Mono.just(record)).next().subscribe();
+        })
+        .timeout(Duration.ofSeconds(10));
+
+// order-results 수신 시 (KafkaReceiver로 구독)
+MonoSink&lt;Order&gt; sink = pendingOrders.remove(result.correlationId());
+sink.success(order);
+</code></pre>
+<pre><code>Producer -&gt; order-requests 토픽 -&gt; Consumer -&gt; 재고 차감 + 주문 저장
+                                           -&gt; order-results 토픽으로 결과 발행
+                                                       -&gt; KafkaReceiver -&gt; correlationId 매칭 -&gt; sink 완료
+</code></pre>
+<p>Consumer는 <code>OrderKafkaConsumer</code>로 별도 분리했다. <code>order-requests</code>를 소비해서 재고를 차감하고 주문을 저장한 뒤, 결과를 <code>order-results</code> 토픽으로 발행한다. KAFKA_ASYNC와 KAFKA_SYNC 모두 같은 Consumer를 공유한다.</p>
+<pre><code class="language-java">@PostConstruct
+public void start() {
+    subscription = KafkaReceiver.create(receiverOptions)
+            .receive()
+            .flatMap(this::processRecord, 32)
+            .subscribe();
+}
+</code></pre>
+<hr/>
+<h1>Optimistic Lock (낙관적 락) - 무한 재시도</h1>
+<h2>결과</h2>
+<pre><code>http_reqs: 약 1,000건 / 5/s 미만
+p(95): 60s (타임아웃)
+http_req_failed: 약 50% 이상 (타임아웃)
+checks 성공: 거의 0% 수준 (대부분 타임아웃)
+</code></pre>
+<h2>분석</h2>
+<p>처참하다. 500명이 동시에 같은 상품을 때리니 충돌 -&gt; 즉시 재시도 -&gt; 또 충돌 -&gt; 즉시 재시도가 타임아웃 날 때까지 반복된다.</p>
+<pre><code class="language-java">.onErrorResume(OptimisticLockingFailureException.class,
+        e -&gt; decrementStock(productId)); // 무한 재귀
+</code></pre>
+<p>재시도에 딜레이도 없고 횟수 제한도 없으니 당연한 결과다. 낙관적 락은 충돌이 적은 환경을 가정한 전략이다. 500명이 동시에 같은 레코드를 건드리는 상황은 애초에 낙관적 락이 맞지 않는다.</p>
+<hr/>
+<h2>Optimistic Lock (낙관적 락) - 재시도 제한</h2>
+<p>무한 재시도 결과가 예상대로 처참했다. 그래서 재시도에 딜레이와 횟수 제한을 두면 얼마나 달라지는지 확인해봤다. 최대 3회, 충돌 시 50ms 대기 후 재시도하도록 변경했다.</p>
+<pre><code class="language-java">// 변경 전
+.onErrorResume(OptimisticLockingFailureException.class,
+        e -&gt; decrementStock(productId)); // 무한 재귀
+
+// 변경 후
+.retryWhen(Retry.backoff(3, Duration.ofMillis(50))
+        .filter(e -&gt; e instanceof OptimisticLockingFailureException)
+        .onRetryExhaustedThrow((spec, signal) -&gt;
+                new BusinessException(ErrorCode.PRODUCT_ORDER_FAILED)));
+
+</code></pre>
+<h2>결과</h2>
+<pre><code>http_reqs: 1,536건 / 7.17/s
+p(95): 60s (k6 타임아웃 한계)
+http_req_failed: 30.53%
+checks 성공: 63.24%
+iteration p(50): 51.54s
+</code></pre>
+<h2>분석</h2>
+<p>재시도 제한을 걸어도 여전히 처참하다. checks 성공률은 63%로 올랐지만(재시도 3회 소진 후 PRODUCT_ORDER_FAILED를 정상 응답으로 받기 때문), 처리량은 7건/초밖에 안 된다. 응답 시간 중간값(median)이 51.54초로, 절반 이상의 요청이 50초가 넘게 걸렸다는 뜻이다. p(95)가 정확히 60초로 찍힌 건 k6의 기본 HTTP 타임아웃이 60초이기 때문이고, 실제로는 더 걸린 요청도 많았을 것이다.</p>
+<p>흐름을 따라가보면 명확하다. 한 요청이 충돌 -&gt; 50ms 대기 -&gt; 재시도하는 동안에도 다른 수백 개의 요청이 같은 row를 노린다. 결국 재시도해도 또 충돌하고, 3번 다 써도 끝나지 않는다. 운 좋게 성공해도 이미 수십 초가 흘러간 후다.</p>
+<p><strong>고경쟁 환경에서 낙관적 락은 재시도 제한을 걸어도 근본적인 해결책이 되지 않는다.</strong> &quot;충돌이 드물 것&quot;이라는 가정 위에 성립하는 전략이기 때문이다. 선착순 쿠폰이나 재고 차감처럼 본질적으로 같은 row를 노리는 환경에서는 그 가정이 깨진다.</p>
+<hr/>
+<h1>Pessimistic Lock (비관적 락)</h1>
+<p>R2DBC는 <code>@Lock</code>을 지원하지 않기 때문에 <code>DatabaseClient</code>로 직접 <code>SELECT FOR UPDATE</code> 쿼리를 작성했다.</p>
+<pre><code class="language-java">databaseClient.sql(&quot;SELECT * FROM products WHERE id = :id FOR UPDATE&quot;)
+        .bind(&quot;id&quot;, productId)
+        ...
+</code></pre>
+<h2>결과</h2>
+<pre><code>http_reqs: 132,049건 / 718/s
+p(95): 328ms
+checks 성공: 100%
+http_req_failed: 91.66% (재고 소진 후 409 응답)
+</code></pre>
+<h2>분석</h2>
+<p>낙관적 락 대비 압도적인 차이다. 락을 걸고 순차적으로 처리하니 충돌 자체가 발생하지 않는다. 재시도도 없고 타임아웃도 없다.</p>
+<p>http_req_failed: 91.66%는 에러가 아니다. 재고 10,000개가 소진된 이후 들어오는 요청에 대해 409(Conflict)로 응답한 비율이다. checks는 201과 409 모두 성공으로 처리했기 때문에 100%가 나왔다. 정상적인 비즈니스 로직이다.</p>
+<p>p(95) 328ms는 락 대기 시간 때문이다. 동시 요청이 많아질수록 뒤에 들어온 요청은 앞 요청이 끝날 때까지 기다려야 한다. 안정적이지만, 락 대기가 곧 응답 시간으로 직결된다.</p>
+<hr/>
+<h1>Atomic Update</h1>
+<p>SELECT FOR UPDATE 없이 UPDATE 조건절 하나로 재고 차감과 검증을 동시에 처리한다.</p>
+<p>락을 잡는 시간이 UPDATE 실행 순간뿐입니다. 애플리케이션이 값을 읽어서 계산하는 과정 없이 DB가 직접 stock - 1을 계산하고 조건까지 검증해 락 보유시간이 최소화 된다.</p>
+<pre><code class="language-java">databaseClient
+    .sql(&quot;UPDATE products SET stock = stock - 1 WHERE id = :id AND stock &gt; 0&quot;)
+    .bind(&quot;id&quot;, productId)
+    .fetch()
+    .rowsUpdated()
+    .flatMap(updatedRows -&gt; {
+        if (updatedRows == 0) {
+            return Mono.error(new BusinessException(ErrorCode.PRODUCT_OUT_OF_STOCK));
+        }
+        return productRepository.findById(productId);
+    })
+    .flatMap(product -&gt; defaultOrderService.saveOrder(userId, product, couponIssueId, correlationId));
+</code></pre>
+<p>핵심은 AND stock &gt; 0 조건이다. 재고 확인과 차감이 DB 레벨에서 원자적으로 처리되고, rowsUpdated() == 0이면 재고가 없었다는 의미다. 별도의 SELECT 없이 판단할 수 있다.</p>
+<h2>결과</h2>
+<pre><code>http_reqs:     126,874  686/s
+p(95):         304.63ms
+checks:        100%
+정합성:        orders 10,000건, stock 0
+</code></pre>
+<h2>분석</h2>
+<p>내 예상은 Pessimistic(718/s)보다 빠르고 Redis Lua(1,624/s)보다 느린 결과였다. DB 왕복이 2번에서 1번으로 줄어드니 당연히 빠를 거라고 봤다.</p>
+<p><strong>병목이 쿼리 횟수가 아니라 row 락 경합이었다.</strong></p>
+<p>Pessimistic은 SELECT FOR UPDATE + UPDATE, Atomic은 UPDATE 1번으로 쿼리 횟수는 다르다. 하지만 둘 다 결국 같은 row(products WHERE id = 1)를 수정한다. MySQL은 UPDATE 실행 시 내부적으로 row-level 락을 걸기 때문에, 500명이 동시에 같은 row를 때리는 상황에서 락 경합이 발생하는 건 동일하다. 쿼리 1번 줄인 효과가 락 대기 시간에 완전히 묻혀버렸다.</p>
+<p><strong>로컬 환경이라 네트워크 레이턴시가 거의 없었다.</strong></p>
+<p>서버와 DB가 같은 머신에 있으니 DB 왕복 1번의 차이가 실질적으로 의미 있는 시간이 아니었다. 실제 프로덕션 환경처럼 네트워크 레이턴시가 수 ms라도 있었다면 쿼리 횟수 차이가 유의미하게 드러났을 것이다.</p>
+<p><strong>@Transactional이 동일하게 걸려있다.</strong></p>
+<p>Atomic UPDATE도 @Transactional이 붙어있어서 트랜잭션 오버헤드는 Pessimistic과 동일하게 발생한다. 락 보유 시간의 차이가 있긴 하지만 미미한 수준이다. Pessimistic은 SELECT FOR UPDATE 시점부터 커밋까지 락을 유지하는 반면, Atomic은 UPDATE 실행 순간에만 락이 걸린다. 이 차이가 p(95) 응답시간에서 304ms vs 328ms로 미세하게 나타났다.</p>
+<p>결론적으로 &quot;DB 왕복 횟수 = 성능&quot;이라는 단순한 가정이 틀렸다. 고경쟁 환경에서는 락 경합이 지배적인 병목이고, 쿼리 최적화의 효과는 그 뒤에 온다.</p>
+<hr/>
+<h1>Redis Lua 스크립트</h1>
+<p>Redis에서 먼저 재고를 차감하고, 성공하면 DB에 주문을 저장한다. Redis는 싱글 스레드로 동작하고 Lua 스크립트는 원자적으로 실행되기 때문에 race condition이 발생하지 않는다.</p>
+<pre><code class="language-lua">local stock = tonumber(redis.call(&#x27;GET&#x27;, KEYS[1]))
+if stock == nil or stock &lt;= 0 then
+    return -1
+end
+redis.call(&#x27;DECR&#x27;, KEYS[1])
+return 1
+</code></pre>
+<h2>결과</h2>
+<pre><code>http_reqs: 약 290,000건 / 1,600/s
+p(95): 약 160ms
+checks 성공: 100%
+http_req_failed: 약 85% (재고 소진 후 409)
+</code></pre>
+<h2>분석</h2>
+<p>비관적 락(718/s) 대비 약 2.2배 빠르다. DB 락 없이 Redis에서 재고를 원자적으로 처리하니 병목이 훨씬 줄어든다. 응답 시간도 160ms 수준으로 비관적 락(328ms)의 절반 정도다.Redis가 인메모리이고 싱글 스레드로 처리되기 때문에 락 자체가 필요 없다. DB는 재고 차감이 아닌 주문 저장만 담당하니 부담도 줄어든다.단, Redis 재고와 DB 재고 간 동기화 문제가 있다. Redis에서 차감에 성공했지만 DB 주문 저장이 실패하면 재고 불일치가 생긴다. 실제 서비스라면 보상 트랜잭션이나 Outbox 패턴이 필요하다. 해당 부분은 다음 편에서 작업해 볼 예정이다.</p>
+<hr/>
+<h1>Kafka</h1>
+<p>주문 요청을 Kafka 토픽에 발행하고 즉시 응답한다. Consumer가 백그라운드에서 재고 차감과 주문 저장을 처리한다.</p>
+<pre><code>Producer -&gt; order-requests 토픽 -&gt; Consumer -&gt; 재고 차감 + 주문 저장
+                                           -&gt; order-results 토픽 (결과 발행)
+</code></pre>
+<h2>결과</h2>
+<pre><code>http_reqs: 382,315건 / 2,100/s
+p(95): 115ms
+checks 성공: 100%
+http_req_failed: 0%
+</code></pre>
+<h2>분석</h2>
+<p>처리량이 압도적이다. Redis Lua(1,624/s) 대비 약 1.3배 빠르다. 발행 후 즉시 응답하니 서버 입장에서는 빠를 수밖에 없다.</p>
+<p>http_req_failed: 0%가 흥미롭다. 재고가 10,000개인데 약 38만 건 요청이 전부 성공했다. 알고보니 k6 테스트가 끝난 후에도 Consumer가 계속 처리하고 있었고, 결국 주문은 정확히 10,000건만 저장됐다.</p>
+<pre><code>SELECT COUNT(*) FROM orders;   -- 10000
+SELECT stock FROM products;    -- 0
+</code></pre>
+<p>WebFlux 기반 비동기 서버와 Kafka의 조합은 자연스럽다. 요청을 받고 즉시 응답하는 패턴이 WebFlux의 논블로킹 철학과 잘 맞는다.</p>
+<hr/>
+<h1>Kafka Sync</h1>
+<p>발행 후 Consumer가 처리를 완료할 때까지 대기한다. <code>correlationId</code>로 요청과 응답을 매칭한다.</p>
+<pre><code class="language-java">return Mono.&lt;Order&gt;create(sink -&gt; {
+            String correlationId = UUID.randomUUID().toString();
+            pendingOrders.put(correlationId, sink);
+
+            SenderRecord&lt;String, String, String&gt; record = SenderRecord.create(
+                    new ProducerRecord&lt;&gt;(&quot;order-requests&quot;, correlationId, payload),
+                    correlationId
+            );
+            kafkaSender.send(Mono.just(record)).next().subscribe();
+        })
+        .timeout(Duration.ofSeconds(10));
+</code></pre>
+<p>Consumer가 처리를 완료하면 order-results 토픽으로 결과를 발행하고, 별도의 KafkaReceiver가 받아서 대기 중인 sink에 결과를 전달한다.</p>
+<h2>결과</h2>
+<pre><code>http_reqs: 3,447건 / 18/s
+p(95): 10.02s (타임아웃)
+checks 성공: 0%
+</code></pre>
+<h2>분석</h2>
+<p>500명이 동시에 요청하면서 Consumer가 처리 속도를 따라가지 못했다. 10초 타임아웃이 걸리면서 거의 모든 요청이 실패했다.</p>
+<p>Kafka의 장점인 비동기 처리를 억지로 동기로 만들었으니 당연한 결과다. Kafka를 동기 방식으로 쓰면 Kafka의 장점을 전혀 활용하지 못하면서 복잡도만 올라간다.</p>
+<hr/>
+<h1>전체 비교</h1>
+<table><thead><tr><th><strong>방식</strong></th><th><strong>처리량</strong></th><th><strong>p(95)</strong></th><th><strong>checks</strong></th></tr></thead><tbody><tr><td><del>Optimistic (무한재시도)</del></td><td><del>5/s 미만</del></td><td><del>59.99s</del></td><td><del>거의 0%</del></td></tr><tr><td><del>Optimistic (재시도 제한)</del></td><td><del>7.3/s</del></td><td><del>60s</del></td><td><del>63.24%</del></td></tr><tr><td>Pessimistic Lock</td><td>718/s</td><td>328ms</td><td>100%</td></tr><tr><td>Atomic UPDATE</td><td>686/s</td><td>304ms</td><td>100%</td></tr><tr><td>Redis Lua</td><td>1,624/s</td><td>159ms</td><td>100%</td></tr><tr><td>Kafka Async</td><td>2,100/s</td><td>115ms</td><td>100%</td></tr><tr><td>Kafka Sync</td><td>18/s</td><td>10s</td><td>0%</td></tr></tbody></table>
+<hr/>
+<h1>정리</h1>
+<p><strong>낙관적 락</strong>은 이런 경쟁 환경에서 쓰면 안 된다. 재시도 제한을 걸어도 근본적인 해결이 안 된다. 충돌이 거의 없는 환경, 예를 들어 유저별로 독립적인 데이터를 수정하는 경우에 적합하다.</p>
+<p><strong>비관적 락</strong>은 정합성을 완벽하게 보장하면서도 적절한 성능을 낸다. DB만으로 모든 걸 처리하고 싶을 때 선택할 수 있는 안정적인 방식이다.</p>
+<p><strong>Atomic UPDATE</strong>는 SELECT FOR UPDATE 없이 UPDATE 조건절 하나로 원자적으로 처리하기 때문에 코드가 더 단순하다. 애플리케이션이 값을 읽고 계산하는 과정 없이 DB가 직접 처리하기 때문에 락 보유 시간도 최소화된다. 그러나 고경쟁 환경에서는 쿼리 횟수를 줄여도 row 락 경합 자체가 병목이라 기대만큼 빠르지 않다. 네트워크 레이턴시가 있는 환경에서는 DB 왕복 1번 차이가 유의미하게 나타날 수 있다. 코드 단순성, 굳이 락을 길게 잡을 이유가 없을 때 사용하면 될 것 같다. </p>
+<p><strong>Redis Lua</strong>는 비관적 락보다 약 2.2배 빠르다. DB 락 없이 Redis에서 원자적으로 처리하기 때문이다. 단, Redis와 DB 간 동기화 문제를 고려해야 한다.</p>
+<p><strong>Kafka</strong>는 처리량이 가장 높다. WebFlux의 논블로킹 특성과 잘 어울리는 방식이다. 단, 요청 시점에 처리 결과를 알 수 없다는 점을 고려해야 한다. 주문 완료 알림은 별도 메커니즘(웹소켓, 폴링 등)이 필요하다.</p>
+<p><strong>Kafka Sync</strong>는 안 쓰는 게 낫다. Kafka를 굳이 동기로 쓸 이유가 없다.그냥 어떤 결과가 나올지 궁금해서 테스트만 해본거다.</p>
+<p>로컬 환경 테스트라 절대적인 수치보다는 방식 간 상대적인 차이에 집중해서 보면 된다. 실제 프로덕션 환경에서는 네트워크 레이턴시, DB 커넥션 풀, Kafka 브로커 성능 등 여러 변수가 추가된다.</p>
+<hr/>
+<h1>Next</h1>
+<ul>
+<li>Kafka 심화
+<ul>
+<li>파티션 전략 (이론 + 현재 구성 분석)</li>
+<li>Consumer Group 최적화</li>
+<li>Dead Letter Queue로 실패 메시지 처리</li>
+<li>Kafka Async의 재고 불일치 문제 -&gt; 보상 트랜잭션으로 해결</li>
+</ul>
+</li>
+</ul></article></div></div>
+  </body>
+</html>

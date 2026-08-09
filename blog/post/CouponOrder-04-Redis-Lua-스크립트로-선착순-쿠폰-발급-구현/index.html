@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 04. Redis Lua 스크립트로 선착순 쿠폰 발급 구현 | Record, Then Build</title>
+    <meta name="description" content="Intro 3편에서 데이터베이스 구성과 JWT 인증을 구현했다. 이번 편에서는 이 시리즈의 핵심인 선착순 쿠폰 발급 구현을 다룬다." />
+    <meta property="og:title" content="[Coupon&amp;Order] 04. Redis Lua 스크립트로 선착순 쿠폰 발급 구현 | Record, Then Build" />
+    <meta property="og:description" content="Intro 3편에서 데이터베이스 구성과 JWT 인증을 구현했다. 이번 편에서는 이 시리즈의 핵심인 선착순 쿠폰 발급 구현을 다룬다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-04-Redis-Lua-%EC%8A%A4%ED%81%AC%EB%A6%BD%ED%8A%B8%EB%A1%9C-%EC%84%A0%EC%B0%A9%EC%88%9C-%EC%BF%A0%ED%8F%B0-%EB%B0%9C%EA%B8%89-%EA%B5%AC%ED%98%84/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-04-Redis-Lua-%EC%8A%A4%ED%81%AC%EB%A6%BD%ED%8A%B8%EB%A1%9C-%EC%84%A0%EC%B0%A9%EC%88%9C-%EC%BF%A0%ED%8F%B0-%EB%B0%9C%EA%B8%89-%EA%B5%AC%ED%98%84/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 04. Redis Lua 스크립트로 선착순 쿠폰 발급 구현</h1><p>Lab/Coupon&amp;Order · 2026-04-20</p><h1>Intro</h1>
+<p>3편에서 데이터베이스 구성과 JWT 인증을 구현했다. 이번 편에서는 이 시리즈의 핵심인 선착순 쿠폰 발급 구현을 다룬다.</p>
+<p>동시에 수천 명이 요청해도 정확히 재고만큼만 발급되어야 하고, 중복 발급이 없어야 한다. 이를 위해 Redis Lua 스크립트를 활용한 원자적 처리 방식을 적용했다. 단순해 보이는 기능이지만 동시성 문제를 올바르게 해결하기까지 고려해야 할 것들이 많다.</p>
+<hr/>
+<h1>Redis Cluster 설정</h1>
+<p>Redis Cluster는 데이터를 여러 노드에 분산 저장한다. 키를 해시값으로 계산해 16384개의 슬롯 중 하나에 배치하는 방식이다.</p>
+<p>문제는 Lua 스크립트에서 여러 키를 사용할 때 모든 키가 같은 슬롯에 있어야 한다는 점이다. 쿠폰 발급에서는 재고 키와 발급된 유저 SET 키 두 개를 동시에 다뤄야 하는데, 이 둘이 다른 슬롯에 있으면 스크립트 실행 자체가 불가능하다.</p>
+<p>이를 해결하기 위해 <strong>hashtag</strong>를 사용했다. Redis는 키에 중괄호(<code>{}</code>)가 있으면 중괄호 안의 값만으로 슬롯을 결정한다.</p>
+<pre><code>// 중괄호 안의 &quot;coupon:1&quot;이 같으므로 -&gt; 항상 같은 슬롯
+&quot;{coupon:1}:stock&quot;
+&quot;{coupon:1}:users&quot;
+</code></pre>
+<p>Lettuce 기반으로 Redis Cluster를 설정하고, 노드 변경을 자동으로 감지하도록 topology refresh도 활성화했다.</p>
+<pre><code class="language-java">@Configuration
+public class RedisConfig {
+
+    @Bean
+    public ReactiveRedisConnectionFactory reactiveRedisConnectionFactory(
+            RedisProperties redisProperties) {
+        RedisClusterConfiguration clusterConfig = new RedisClusterConfiguration(
+                redisProperties.getCluster().getNodes()
+        );
+        clusterConfig.setPassword(redisProperties.getPassword());
+
+        ClusterTopologyRefreshOptions topologyRefreshOptions =
+                ClusterTopologyRefreshOptions.builder()
+                        .enableAllAdaptiveRefreshTriggers()
+                        .refreshPeriod(Duration.ofSeconds(30))
+                        .build();
+
+        ClusterClientOptions clientOptions = ClusterClientOptions.builder()
+                .topologyRefreshOptions(topologyRefreshOptions)
+                .build();
+
+        LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
+                .clientOptions(clientOptions)
+                .build();
+
+        return new LettuceConnectionFactory(clusterConfig, clientConfig);
+    }
+
+    @Bean
+    public ReactiveRedisTemplate&lt;String, String&gt; reactiveRedisTemplate(
+            ReactiveRedisConnectionFactory factory) {
+        StringRedisSerializer serializer = new StringRedisSerializer();
+        RedisSerializationContext&lt;String, String&gt; context = RedisSerializationContext
+                .&lt;String, String&gt;newSerializationContext(serializer)
+                .build();
+        return new ReactiveRedisTemplate&lt;&gt;(factory, context);
+    }
+}
+</code></pre>
+<hr/>
+<h1>Lua 스크립트 동시성 처리</h1>
+<h2>왜 Lua 스크립트?</h2>
+<p>Redis는 싱글 스레드로 동작한다. 즉, 한 번에 하나의 명령만 처리한다. 여기서 Lua 스크립트의 강점이 드러난다. Lua 스크립트는 Redis에서 원자적으로 실행된다. 스크립트가 실행되는 동안 다른 명령이 절대 끼어들 수 없다.</p>
+<p>만약 Lua 스크립트 없이 개별 명령으로 처리하면 어떻게 될까.</p>
+<pre><code>1. SISMEMBER -&gt; 중복 아님 확인
+   (다른 요청이 끼어듦)
+2. GET -&gt; 재고 1개 확인
+   (다른 요청이 재고를 가져감)
+3. SADD -&gt; 유저 추가
+4. DECR -&gt; 재고 -1 (이미 0인데 또 감소!)
+</code></pre>
+<p>이 사이에 다른 요청이 끼어들면 중복 발급이나 재고 초과가 발생한다. Lua 스크립트는 이 네 가지 명령을 하나의 트랜잭션처럼 처리해 이 문제를 완전히 해결한다.</p>
+<h2>스크립트 구현</h2>
+<pre><code class="language-java">private static final String ISSUE_COUPON_SCRIPT = &quot;&quot;&quot;
+        local isDuplicate = redis.call(&#x27;SISMEMBER&#x27;, KEYS[1], ARGV[1])
+        if isDuplicate == 1 then
+            return 0
+        end
+        local stock = tonumber(redis.call(&#x27;GET&#x27;, KEYS[2]))
+        if stock == nil or stock &lt;= 0 then
+            return -1
+        end
+        redis.call(&#x27;SADD&#x27;, KEYS[1], ARGV[1])
+        redis.call(&#x27;DECR&#x27;, KEYS[2])
+        return 1
+        &quot;&quot;&quot;;
+</code></pre>
+<ul>
+<li><code>KEYS[1]</code> -&gt; <code>{coupon:1}:users</code> (발급된 유저 SET)</li>
+<li><code>KEYS[2]</code> -&gt; <code>{coupon:1}:stock</code> (재고)</li>
+<li><code>ARGV[1]</code> -&gt; userId</li>
+<li>반환값: <code>0</code> = 중복, <code>-1</code> = 재고 없음, <code>1</code> = 성공</li>
+</ul>
+<p>스크립트 흐름은 간단하다.</p>
+<ol>
+<li><code>SISMEMBER</code>로 이미 발급받은 유저인지 확인</li>
+<li><code>GET</code>으로 재고 조회</li>
+<li><code>SADD</code>로 유저 SET에 추가 + <code>DECR</code>로 재고 차감</li>
+</ol>
+<p>이 네 가지 명령이 원자적으로 실행되기 때문에 어떤 순서로 요청이 들어와도 정합성이 보장된다.</p>
+<hr/>
+<h1>쿠폰 발급 서비스</h1>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+public class CouponIssueService {
+
+    private final CouponIssueRepository couponIssueRepository;
+    private final ReactiveRedisTemplate&lt;String, String&gt; reactiveRedisTemplate;
+
+    @Transactional
+    public Mono&lt;CouponIssue&gt; issueCoupon(Long couponId, Long userId) {
+        List&lt;String&gt; keys = List.of(usersKey(couponId), stockKey(couponId));
+
+        return reactiveRedisTemplate.execute(
+                        RedisScript.of(ISSUE_COUPON_SCRIPT, Long.class),
+                        keys,
+                        List.of(String.valueOf(userId))
+                )
+                .next()
+                .flatMap(result -&gt; {
+                    if (result == 0L) {
+                        return Mono.error(new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED));
+                    }
+                    if (result == -1L) {
+                        return Mono.error(new BusinessException(ErrorCode.COUPON_OUT_OF_STOCK));
+                    }
+                    return couponIssueRepository.save(
+                            CouponIssue.builder()
+                                    .couponId(couponId)
+                                    .userId(userId)
+                                    .build()
+                    ).onErrorMap(DuplicateKeyException.class,
+                            e -&gt; new BusinessException(ErrorCode.COUPON_ALREADY_ISSUED));
+                });
+    }
+
+    private String stockKey(Long couponId) {
+        return &quot;{coupon:&quot; + couponId + &quot;}:stock&quot;;
+    }
+
+    private String usersKey(Long couponId) {
+        return &quot;{coupon:&quot; + couponId + &quot;}:users&quot;;
+    }
+}
+</code></pre>
+<p>Redis에서 1차로 중복과 재고를 체크하고, DB 저장 시 <code>DuplicateKeyException</code>이 발생하면 <code>BusinessException</code>으로 변환한다. DB의 <code>UNIQUE(coupon_id, user_id)</code> 제약이 2차 방어선이 된다.</p>
+<p>쿠폰 생성 시에도 Redis에 재고를 초기화한다.</p>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+public class CouponService {
+
+    private final CouponRepository couponRepository;
+    private final ReactiveRedisTemplate&lt;String, String&gt; reactiveRedisTemplate;
+
+    @Transactional
+    public Mono&lt;Coupon&gt; createCoupon(String name, String type,
+                                     int discountValue, int totalStock) {
+        return couponRepository.save(
+                Coupon.builder()
+                        .name(name)
+                        .type(type)
+                        .discountValue(discountValue)
+                        .totalStock(totalStock)
+                        .build()
+        ).flatMap(coupon -&gt;
+                // DB 저장 후 couponId가 생긴 다음에 Redis 키 세팅
+                reactiveRedisTemplate.opsForValue()
+                        .set(stockKey(coupon.getId()), String.valueOf(totalStock))
+                        .thenReturn(coupon)
+        );
+    }
+}
+</code></pre>
+<p><code>flatMap</code>을 사용하는 이유는 DB에 저장된 후 생성된 <code>couponId</code>로 Redis 키를 만들어야 하기 때문이다. <code>map</code>은 동기 변환이라 내부에서 또 다른 비동기 작업을 체이닝할 수 없다.</p>
+<hr/>
+<h1>k6 부하 테스트 환경 구성</h1>
+<h2>유저 생성 스크립트</h2>
+<p>부하 테스트 전에 테스트용 유저를 대량으로 생성해야 한다. k6의 <code>setup-users.js</code>로 1000명의 유저를 순차적으로 생성했다.</p>
+<pre><code class="language-js">export const options = {
+    vus: 1,           // 반드시 1 -&gt; __ITER가 VU별 로컬 카운터라 여러 VU면 중복됨
+    iterations: 1000,
+};
+
+export default function () {
+    const username = `user_${__ITER}`;
+    http.post(
+        &#x27;http://localhost:8080/api/auth/register&#x27;,
+        JSON.stringify({ username, password: &#x27;test1234&#x27; }),
+        { headers: { &#x27;Content-Type&#x27;: &#x27;application/json&#x27; } }
+    );
+}
+</code></pre>
+<p><code>vus: 1</code>로 고정하는 이유가 있다. <code>__ITER</code>는 VU별 로컬 카운터라 여러 VU가 동시에 실행되면 같은 <code>__ITER</code> 값을 가질 수 있다. 예를 들어 VU가 10개면 <code>ITER: 45, VU: 7</code>과 <code>ITER: 45, VU: 5</code>가 동시에 존재해 <code>user_45</code>가 중복 생성되는 문제가 생긴다.</p>
+<h2>쿠폰 발급 부하 테스트 스크립트</h2>
+<pre><code class="language-js">export const options = {
+    setupTimeout: &#x27;300s&#x27;,
+    stages: [
+        { duration: &#x27;10s&#x27;, target: 100 },
+        { duration: &#x27;30s&#x27;, target: 500 },
+        { duration: &#x27;30s&#x27;, target: 1000 },
+        { duration: &#x27;10s&#x27;, target: 0 },
+    ],
+    thresholds: {
+        http_req_duration: [&#x27;p(95)&lt;2000&#x27;],
+        http_req_failed: [&#x27;rate&lt;0.99&#x27;],
+    },
+};
+
+export function setup() {
+    const tokens = [];
+
+    for (let i = 0; i &lt; 1000; i++) {
+        const loginRes = http.post(
+            &#x27;http://localhost:8080/api/auth/login&#x27;,
+            JSON.stringify({ username: `user_${i}`, password: &#x27;test1234&#x27; }),
+            { headers: { &#x27;Content-Type&#x27;: &#x27;application/json&#x27; } }
+        );
+
+        if (loginRes.status === 200) {
+            tokens.push(loginRes.json(&#x27;accessToken&#x27;));
+        }
+    }
+
+    console.log(`준비된 토큰 수: ${tokens.length}`);
+    return { tokens };
+}
+
+export default function (data) {
+    const token = data.tokens[__VU % data.tokens.length];
+
+    const res = http.post(
+        &#x27;http://localhost:8080/api/coupons/1/issue&#x27;,
+        null,
+        {
+            headers: {
+                &#x27;Authorization&#x27;: `Bearer ${token}`,
+                &#x27;Content-Type&#x27;: &#x27;application/json&#x27;
+            }
+        }
+    );
+
+    check(res, {
+        &#x27;status is 201 or 409&#x27;: (r) =&gt; r.status === 201 || r.status === 409,
+    });
+}
+</code></pre>
+<p><code>setup()</code>에서 1000명 전원 로그인 후 토큰을 배열에 담고, 각 VU가 <code>__VU % tokens.length</code>로 서로 다른 토큰을 사용한다.</p>
+<hr/>
+<h1>1차 부하 테스트 결과</h1>
+<pre><code>http_req_duration: avg=873ms  min=35ms  med=819ms  max=60s  p(95)=1.84s
+http_req_failed:   95.94% (24574 / 25613)
+http_reqs:         25613 -&gt; 113/s
+</code></pre>
+<h2>결과 분석</h2>
+<p><strong>긍정적인 부분</strong></p>
+<p>쿠폰 100개가 정확히 100개만 발급됐다. Redis Lua 스크립트의 원자적 처리가 완벽하게 동작했다는 의미다. 중복 발급도 재고 초과도 없었다.</p>
+<p><strong>문제점</strong></p>
+<p><code>http_req_failed</code> 95.94%가 충격적으로 보이지만, 실제로는 쿠폰 재고가 100개뿐이라 재고 소진 후 모든 요청이 409를 반환한 것이다. 409는 비즈니스 로직상 정상 응답이므로 실제 실패율은 아니다.</p>
+<p>진짜 문제는 <code>max: 60s</code> 타임아웃이다. 일부 요청이 60초까지 걸렸다는 건 어딘가에 병목이 있다는 신호다. 재고가 100개뿐이라 100건 처리 후 나머지는 모두 Redis에서 즉시 튕겨내는 구조인데도 타임아웃이 발생했다.</p>
+<p>이는 이번 테스트의 근본적인 한계이기도 하다. 재고가 너무 적어 실제 부하가 DB write까지 이어지지 않았다. 진짜 부하 테스트가 되려면 재고를 충분히 늘려서 DB write 병목을 확인해야 한다.</p>
+<hr/>
+<h1>Next</h1>
+<ul>
+<li>재고를 충분히 늘려 본격적인 부하 테스트 진행</li>
+<li>Grafana + Prometheus로 병목 지점 시각화</li>
+<li>주문 API에서 다양한 재고 처리 방식 비교 (DB 낙관적 락, 비관적 락, Kafka)</li>
+</ul></article></div></div>
+  </body>
+</html>

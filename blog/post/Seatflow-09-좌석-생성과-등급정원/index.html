@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 09. 좌석 생성과 등급,정원 | Record, Then Build</title>
+    <meta name="description" content="Intro 7편(좌석 점유)과 8편(실시간 현황)을 만들면서 계속 찜찜했던 게 있다. 좌석이 어디서 생기는지가 없었다. 공연을 만들면 totalSeats 숫자만 저장될 뿐, 실제 seats 행은 하나도 안 만들어졌다. 그래서 7,8편" />
+    <meta property="og:title" content="[Seatflow] 09. 좌석 생성과 등급,정원 | Record, Then Build" />
+    <meta property="og:description" content="Intro 7편(좌석 점유)과 8편(실시간 현황)을 만들면서 계속 찜찜했던 게 있다. 좌석이 어디서 생기는지가 없었다. 공연을 만들면 totalSeats 숫자만 저장될 뿐, 실제 seats 행은 하나도 안 만들어졌다. 그래서 7,8편" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-09-%EC%A2%8C%EC%84%9D-%EC%83%9D%EC%84%B1%EA%B3%BC-%EB%93%B1%EA%B8%89%EC%A0%95%EC%9B%90/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-09-%EC%A2%8C%EC%84%9D-%EC%83%9D%EC%84%B1%EA%B3%BC-%EB%93%B1%EA%B8%89%EC%A0%95%EC%9B%90/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 09. 좌석 생성과 등급,정원</h1><p>Lab/SeatFlow · 2026-06-30</p><h1>Intro</h1>
+<p>7편(좌석 점유)과 8편(실시간 현황)을 만들면서 계속 찜찜했던 게 있다. 좌석이 어디서 생기는지가 없었다. 공연을 만들면 totalSeats 숫자만 저장될 뿐, 실제 seats 행은 하나도 안 만들어졌다. 그래서 7,8편 테스트는 매번 좌석을 SQL로 직접 INSERT해서 진행했었다.</p>
+<p>이번 편에서 공연을 만들면 좌석이 자동으로 생기게 한다. 그리고 좌석마다 등급(VIP/R/S)과 가격, 등급별 정원을 갖게 한다.</p>
+<p>핵심 결정은 누가 좌석을 만드냐다. show-service가 직접 seat DB에 넣으면 안 된다(다른 서비스 DB를 건드리는 안티패턴).</p>
+<p>그래서 show-service가 show.created를 발행하고, seat-service가 그걸 받아 좌석을 만든다.</p>
+<pre><code>show 생성 → show.created 발행 → seat-service 수신 → 등급별 좌석 생성
+</code></pre>
+<p>이 구조 덕에 6편에서 만든 Outbox(발행 보장)와 멱등성(중복 수신 방어)이 그대로 다시 나온다. 다만 이번엔 발행하는 show-service가 MongoDB라, 그 과정에서 Outbox를 한 번 더 손봤다.</p>
+<hr/>
+<h1>등급을 어떻게 담아갈까?</h1>
+<p>공연 하나에 등급이 여러 개고, 등급마다 정원, 가격이 다르다.</p>
+<pre><code>BTS 콘서트
+ㄴ VIP  100석  150,000원
+ㄴ R    200석  120,000원
+ㄴ S    300석   90,000원
+</code></pre>
+<p>show-service는 MongoDB라 등급 목록을 공연 문서 안에 그대로 중첩한다.</p>
+<p>단일 totalSeats/price는 빼고 등급 리스트로 일원화했다.</p>
+<pre><code class="language-java">public record SeatGrade(SeatGradeType grade, int capacity, BigDecimal price) {}
+
+@Document(collection = &quot;shows&quot;)
+public class Show {
+    @Id private String id;
+    private String title;
+    private String venue;
+    private LocalDateTime showDate;
+    private List&lt;SeatGrade&gt; seatGrades;   // 등급별 정원·가격
+    // ...
+    public int totalSeats() {             // 전체 좌석 수는 정원 합으로 유도
+        return seatGrades.stream().mapToInt(SeatGrade::capacity).sum();
+    }
+}
+</code></pre>
+<p>등급 타입(SeatGradeType)은 show가 발행하고 seat가 받는 공통 계약이라 common 모듈에 둔다. 양쪽이 같은 enum을 쓰니 문자열 오타로 어긋날 일이 없다.</p>
+<blockquote>
+<p>SeatGrade를 처음엔 일반 클래스로 뒀는데, 요청 JSON을 역직렬화할 때 기본 생성자가 없어 깨졌다. record로 바꾸니 Jackson이 알아서 처리했다. 값 객체라 record가 의미상으로도 맞았다.</p>
+</blockquote>
+<hr/>
+<h1>MongoDB Outbox</h1>
+<p>지금까지 show-service는 공연 CRUD만 했다. 이제 show.created를 발행해야 하니 producer가 된다.</p>
+<p>그러면 6편에서 본 dual-write 문제가 다시 생긴다.</p>
+<p>공연 저장과 이벤트 발행이 어긋나면 안 된다. 그래서 Outbox를 쓴다.</p>
+<pre><code class="language-java">@Transactional
+public Show createShow(CreateShowCommand command) {
+    Show show = ...;
+    showRepository.save(show);                    // ① 공연 저장
+
+    ShowCreatedEvent event = toEvent(show);
+    outboxRepository.save(Outbox.builder()        // ② show.created 적재 (같은 트랜잭션)
+            .eventType(EventTopic.SHOW_CREATED)
+            .payload(toJson(EventEnvelope.of(...)))
+            .build());
+    return show;
+}
+</code></pre>
+<p>auth-service의 회원가입과 똑같은 구조다. 차이는 show가 MongoDB라는 것뿐이다.</p>
+<h2>같은 패턴, 다른 동시성 제어</h2>
+<p>6편 Outbox는 MySQL 기준이었다. PENDING을 가져오는것을 FOR UPDATE SKIP LOCKED(행 잠금)로 했다. 근데 Mongo엔 그게 없기 때문에 findAndModify(문서를 찾으면서 동시에 수정하는 원자적 연산)를 쓴다.</p>
+<p>MongoDB</p>
+<table><thead><tr><th>구분</th><th><strong>MySQL</strong></th><th><strong>MongoDB</strong></th></tr></thead><tbody><tr><td>PENDING 가져오기</td><td>SELECT ... FOR UPDATE SKIP LOCKED</td><td>findAndModify</td></tr><tr><td>원자성 근거</td><td>행 잠금(lock)</td><td>문서 단위 원자적 갱신</td></tr></tbody></table>
+<p>개념(트랜잭션 원자성, 폴링, 백오프)은 똑같고 PENDING을 어떻게 원자적으로 가져오냐만 다르다. 잠금이냐, 원자적 갱신이냐. 둘 다 여러 인스턴스가 같은 걸 중복 발송하지 않게하는게 목적이다.</p>
+<blockquote>
+<p>Mongo 트랜잭션을 쓰려면 replica set이 필요하다. 단일 노드(standalone) Mongo는 트랜잭션 자체가 안 된다(멤버가 1개여도 replica set으로 초기화돼 있으면 된다).</p>
+</blockquote>
+<hr/>
+<h1>JPA와 Mongo, 두 Outbox를 추상화</h1>
+<p>여기서 한 가지를 더 했다. 이제 Outbox 구현이 둘이 됐다.auth(JPA), show(Mongo).</p>
+<p>처음엔 공통 모듈(common-outbox)에 JPA 구현이 통째로 들어 있었는데, 그러면 그 모듈을 쓰는 모든 서비스에 JPA가 딸려온다. Mongo만 쓰는 show에도 JPA가 불필요하게 존재해버린다. 그래서 포트-어댑터로 갈랐다.</p>
+<p>사실 mongo는 아직까진 한 곳에만 쓰여서 안해도되는데 그냥 추상화하면 어떤식으로 할까 고민하다가 진행하게 되었다.</p>
+<pre><code>common-outbox (DB를 모름. 인터페이스 + 공통 로직만)
+ㄴ OutboxStore (interface)     &lt;- 저장소 동작 계약(포트)
+ㄴ OutboxMessage (interface)   &lt;- 발행에 필요한 것만 노출
+ㄴ OutboxBackoff               &lt;- 백오프+jitter 계산 (순수 자바)
+ㄴ OutboxScheduler             &lt;- 공통 스케줄러 (인터페이스에만 의존)
+
+auth-service:  JpaOutboxStore   implements OutboxStore  (FOR UPDATE SKIP LOCKED)
+show-service:  MongoOutboxStore implements OutboxStore  (findAndModify)
+</code></pre>
+<p>공통 스케줄러는 OutboxStore 인터페이스만 안다. JPA가 주입되든 Mongo가 주입되든 똑같이 돈다. 각 서비스는 자기 DB 구현만 가지면 되고, common은 어느 DB도 모른다.</p>
+<p>처음부터 이렇게 안 한 건 우선 구현이 하나(JPA)일 땐 추상화할 이유가 없었다.</p>
+<p>두 번째 구현(Mongo)이 생기고 나서야 뭐가 같고 뭐가 다른지가 보였고, 그때 갈랐다. 미리 추상화했으면 Mongo 특성을 모른 채 JPA 기준으로 잘못 그렸을 거다.</p>
+<hr/>
+<h1>seat가 좌석을 만든다</h1>
+<p>show가 show.created를 발행했으니, seat-service가 받아서 좌석을 만든다. 컨슈머는 받아서 위임만 한다.</p>
+<pre><code class="language-java">@KafkaListener(topics = EventTopic.SHOW_CREATED, groupId = &quot;seat-service&quot;)
+public void consume(String message) {
+    EventEnvelope&lt;ShowCreatedEvent&gt; event = deserialize(message);
+    seatGenerationService.createSeats(event.payload());
+}
+</code></pre>
+<p>생성은 등급별로 정원만큼 좌석을 만든다.</p>
+<pre><code class="language-java">for (GradeSpec grade : event.grades()) {
+    for (int number = 1; number &lt;= grade.capacity(); number++) {
+        seats.add(Seat.builder()
+                .showId(showId)
+                .section(grade.grade().name())   // VIP/R/S
+                .number(number)
+                .price(grade.price().intValue())
+                .build());
+    }
+}
+seatRepository.saveAll(seats);
+</code></pre>
+<p>VIP 100석이면 VIP-1 ~ VIP-100, R 200석이면 R-1 ~ R-200. 등급명을 section에 매핑했다.</p>
+<hr/>
+<h1>중복 이벤트 막기(Inbox 제거)</h1>
+<p>Kafka는 at-least-once라 같은 show.created가 두 번 올 수 있다. 그러면 좌석이 두 배로 생긴다. 막아야 한다.</p>
+<p>6편 user-service에선 inbox(처리한 event_id를 별도 테이블에 기록)로 막았다. 근데 이번엔 inbox를 안 썼다. 좌석은 결과물(seats 행) 자체로 중복을 판단할 수 있기 때문이다. 이미 이 공연 좌석이 있는지를 seats를 보면 안다. 굳이 처리 기록을 따로 둘 이유가 없다.</p>
+<p>방법은 비즈니스 키 unique 제약이다. 좌석의 자연 키는 (show_id, section, number) , 같은 공연,등급·번호 좌석은 하나뿐이어야 한다.</p>
+<pre><code class="language-java">@Table(name = &quot;seats&quot;,
+    uniqueConstraints = @UniqueConstraint(
+        columnNames = {&quot;show_id&quot;, &quot;section&quot;, &quot;number&quot;}))
+</code></pre>
+<p>처음엔 &quot;이 공연 좌석 있나?&quot;를 미리 조회(existsByShowId)하려 했는데, 그건 확인과 생성 사이에 틈이 있어 동시에 두 이벤트가 오면 둘 다 통과한다(7편에서 본 check-then-act 문제). 그래서 확인 없이 바로 저장하고, 충돌하면 무시한다.</p>
+<pre><code class="language-java">@Transactional(noRollbackFor = DataIntegrityViolationException.class)
+public void createSeats(ShowCreatedEvent event) {
+    List&lt;Seat&gt; seats = buildSeats(event);
+    try {
+        seatRepository.saveAll(seats);
+    } catch (DataIntegrityViolationException e) {
+        // unique 충돌 = 이미 생성된 공연(중복 이벤트) -&gt; 무시
+        log.info(&quot;이미 생성된 좌석&quot;);
+    }
+}
+</code></pre>
+<h2>멱등성을 보장하는 방법</h2>
+<p>같은 중복 막기인데 방법이 갈린다.</p>
+<table><thead><tr><th><strong>방법</strong></th><th><strong>충돌 처리</strong></th><th><strong>트랜잭션 오염</strong></th><th><strong>커넥션 풀 고갈 위험</strong></th></tr></thead><tbody><tr><td>save + catch (같은 트랜잭션)</td><td>예외 잡기</td><td>위험(컨슈머 무트랜잭션이어야 안전)</td><td>없음</td></tr><tr><td>INSERT IGNORE</td><td>예외 없이 0/1</td><td>없음</td><td>없음</td></tr><tr><td>REQUIRES_NEW + catch</td><td>독립 트잭에서 잡기</td><td>없음(격리)</td><td>높음 (스레드 당 커넥션 2개)</td></tr><tr><td>noRollbackFor + catch</td><td>같은 트랜잭션 내에서 특정 예외 지정 Catch</td><td>없음 (지정한 예외는 오염 안됨)</td><td>없음</td></tr></tbody></table>
+<p>JPA 라이프사이클이나 영속성 컨텍스트의 기능이 필요 없는 단순한 중복 방지라면 예외가 발생하지 않는 INSERT IGNORE 방식이 가장 단순하고 효율적이다. 반면 JPA를 그대로 활용해야 하거나 여러 작업을 하나의 트랜잭션으로 묶어야 하는 경우에는 noRollbackFor를 사용해 중복 예외만 롤백 대상에서 제외하는 편이 REQUIRES_NEW보다 커넥션 사용량과 부분 커밋 위험을 줄일 수 있다. REQUIRES_NEW는 독립적인 커밋이 필요한 경우에 선택하는 것이 적절하다.</p>
+<hr/>
+<h1>테스트</h1>
+<p>공연을 만들고, 좌석이 자동으로 생기는지 본다.</p>
+<pre><code class="language-bash">curl -X POST http://localhost:8086/api/shows \
+  -H &#x27;Content-Type: application/json&#x27; \
+  -d &#x27;{&quot;title&quot;:&quot;테스트 공연&quot;,&quot;venue&quot;:&quot;올림픽홀&quot;,&quot;showDate&quot;:&quot;2026-09-01T19:00:00&quot;,
+       &quot;seatGrades&quot;:[{&quot;grade&quot;:&quot;VIP&quot;,&quot;capacity&quot;:10,&quot;price&quot;:150000},
+                     {&quot;grade&quot;:&quot;R&quot;,&quot;capacity&quot;:20,&quot;price&quot;:120000}]}&#x27;
+</code></pre>
+<p>show 쪽 outbox에 show.created가 PENDING으로 쌓였다가 곧 PUBLISHED로 바뀐다. 그 직후 seat 쪽에 좌석이 생긴다.</p>
+<pre><code>SELECT section, count(*), price FROM seats WHERE show_id = &#x27;...&#x27; GROUP BY section, price;
+-- VIP | 10 | 150000
+-- R   | 20 | 120000
+</code></pre>
+<p>VIP 10 + R 20 = 30개. 그다음 멱등성을 확인한다. show outbox를 PENDING으로 되돌려 같은 이벤트를 다시 발행시킨다.</p>
+<pre><code>db.outbox.updateOne({eventType:&quot;show.created&quot;}, {$set:{status:&quot;PENDING&quot;}})
+</code></pre>
+<p>좌석은 여전히 30개다. 같은 이벤트가 또 와도 unique 충돌로 막혀서 안 늘어난다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>공연을 만들면 show.created 이벤트로 좌석이 자동 생성된다. show-service가 직접 seat DB를 건드리지 않는다.</li>
+<li>show가 producer가 되면서 Mongo Outbox를 만들었다. 개념은 MySQL과 같고 동시성 제어만 findAndModify로 다르다.</li>
+<li>JPA, Mongo 두 구현이 생겨서 Outbox를 포트-어댑터로 추상화했다. common은 DB를 모르고, 각 서비스가 자기 어댑터를 가진다.</li>
+<li>중복 수신은 inbox 없이 비즈니스 키 unique + REQUIRES_NEW로 막았다. 결과물로 중복을 판단할 수 있으면 별도 inbox가 필요 없다.</li>
+</ul>
+<hr/>
+<h1>NEXT</h1>
+<p>이제 7, 8편이 임시 데이터 없이 진짜 좌석으로 돈다. 다음 편부터는 예매와 결제를 더 고도화 해볼 것이다.</p></article></div></div>
+  </body>
+</html>

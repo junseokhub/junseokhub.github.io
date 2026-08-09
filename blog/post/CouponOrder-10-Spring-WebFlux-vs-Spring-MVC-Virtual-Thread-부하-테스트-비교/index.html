@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 10. Spring WebFlux vs Spring MVC + Virtual Thread 부하 테스트 비교 | Record, Then Build</title>
+    <meta name="description" content="Intro 드디어 마지막 시리즈 10편이다!  " />
+    <meta property="og:title" content="[Coupon&amp;Order] 10. Spring WebFlux vs Spring MVC + Virtual Thread 부하 테스트 비교 | Record, Then Build" />
+    <meta property="og:description" content="Intro 드디어 마지막 시리즈 10편이다!  " />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-10-Spring-WebFlux-vs-Spring-MVC-Virtual-Thread-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EB%B9%84%EA%B5%90/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-10-Spring-WebFlux-vs-Spring-MVC-Virtual-Thread-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EB%B9%84%EA%B5%90/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 10. Spring WebFlux vs Spring MVC + Virtual Thread 부하 테스트 비교</h1><p>Lab/Coupon&amp;Order · 2026-05-04</p><h1>Intro</h1>
+<p>드디어 마지막 시리즈 10편이다!<br/>
+이 시리즈는 쿠폰 발급, 재고 처리, Kafka Consumer 등 다양한 동시성 문제를 WebFlux로 구현하면서 시작됐다. 7편부터 9편까지 WebFlux 기반에서 낙관적 락, 비관적 락, Redis Lua, Kafka Async, DLQ, Outbox Pattern까지 구현했다.</p>
+<p>우선 꼭 명심해야할 사항이 있다.<br/>
+지금까지 나는 테스트 결과들을 다 올리면서 비교하고 있었는데, 아무래도 로컬 + 개인서버를 조합하여 각각 다른날에 테스트를 하고있다보니, 실제 프로덕션환경에서는 GC, 네트워크 등 다양한 변수에 따라 결과가 달라질 수도있다. 절대 수치만을 너무 맹신해서는 안된다!</p>
+<p>마지막 10편에서는 동일한 시나리오를 Spring MVC + Virtual Thread로 구현하고 WebFlux와 성능을 비교한다. 핵심 질문은 하나다.</p>
+<p><strong>성능이 비슷하다면 복잡한 WebFlux를 써야 할 이유가 있는지?</strong></p>
+<hr/>
+<p><strong>WebFlux 프로젝트</strong></p>
+<ul>
+<li>Spring Boot 4.0.5, WebFlux (Netty), Java 21</li>
+<li>DB: MySQL + R2DBC</li>
+<li>Cache: Redis Cluster (3노드)</li>
+<li>Message Queue: Kafka (브로커 3개)</li>
+<li>MVC 프로젝트
+<ul>
+<li>
+<p>Spring Boot 4.0.6, Spring MVC (Tomcat), Java 21</p>
+</li>
+<li>
+<p>Virtual Thread: <code>spring.threads.virtual.enabled: true</code></p>
+</li>
+<li>
+<p>DB: MySQL + HikariCP (커넥션 풀 50)</p>
+</li>
+<li>
+<p>Cache: Redis Cluster (3노드)</p>
+</li>
+<li>
+<p>Message Queue: Kafka (브로커 3개)
+-k6 시나리오</p>
+<pre><code>stages: [
+   { duration: &#x27;30s&#x27;, target: 100 },
+   { duration: &#x27;60s&#x27;, target: 500 },
+   { duration: &#x27;10s&#x27;, target: 0 },
+]
+</code></pre>
+</li>
+</ul>
+</li>
+</ul>
+<p>유저 1,000명 사전 로그인, 상품 재고 10,000개, 최대 VU 500명.</p>
+<hr/>
+<h1>Virtual Thread가 뭔데?</h1>
+<p>Java 21에서 정식 도입된 경량 스레드다. 기존 플랫폼 스레드는 OS 스레드와 1:1로 매핑되어 블로킹 시 스레드가 점유된다. Virtual Thread는 JVM이 관리하는 경량 스레드로, 블로킹 시 OS 스레드를 반환하고 다른 작업을 처리한다.</p>
+<p>Spring MVC에서는 설정 하나로 활성화할 수 있다.</p>
+<pre><code>spring:
+  threads:
+    virtual:
+      enabled: true
+</code></pre>
+<p>코드 변경 없이 Tomcat의 모든 요청 처리 스레드가 Virtual Thread로 동작한다.</p>
+<p>또 추가로 설정하려면</p>
+<p><strong>@Async 별도 설정</strong></p>
+<pre><code class="language-java">@Configuration 
+@EnableAsync 
+public class AsyncConfig {
+     @Bean public Executor asyncExecutor() {
+         return Executors.newVirtualThreadPerTaskExecutor();
+    } 
+}
+</code></pre>
+<p><strong>Scheduled Task</strong></p>
+<pre><code class="language-java">@Configuration 
+public class SchedulerConfig {
+     @Bean public TaskScheduler taskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setThreadFactory(Thread.ofVirtual().factory()); 
+        return scheduler;
+    }
+}
+</code></pre>
+<p><strong>Pinning</strong>
+JDK 21에서는 synchronized 블록 안에서 블로킹 호출이 발생하면 Virtual Thread가 캐리어 스레드에 고정(pinning)되어 장점이 사라지므로 주의해야 한다. 이런 경우 ReentrantLock 사용이 권장된다.</p>
+<p>참고로 JDK 24(JEP 491)부터는 synchronized에서도 pinning이 발생하지 않도록 개선되었기 때문에, 향후 JDK 업그레이드 시점에는 이 제약이 사라진다.</p>
+<p><strong>커넥션 풀 조정</strong>
+Virtual Thread는 거의 무제한으로 생성되기 때문에, 결국 DB 커넥션 풀이 동시성의 병목이 된다. 수천 개의 Virtual Thread가 동시에 커넥션을 요구하면 HikariCP에서 대기가 길어져 오히려 응답 시간이 악화될 수 있다. maximum-pool-size를 적절히 늘리거나, 필요하다면 Semaphore로 동시 실행 수를 제한하는 전략이 필요할 것 같다.</p>
+<hr/>
+<h1>테스트 결과</h1>
+<h2>직접 처리 (Kafka 없이)</h2>
+<table><thead><tr><th>방식</th><th>WebFlux TPS</th><th>WebFlux p(95)</th><th>MVC TPS</th><th>MVC p(95)</th></tr></thead><tbody><tr><td>PESSIMISTIC</td><td>636/s</td><td>377ms</td><td>1,181/s</td><td>246ms</td></tr><tr><td>REDIS_LUA</td><td>1,624/s</td><td>159ms</td><td>1,296/s</td><td>285ms</td></tr></tbody></table>
+<p>PESSIMISTIC에서 MVC가 더 높은 TPS를 보였다. SELECT FOR UPDATE는 락을 잡은 트랜잭션이 끝날 때까지 다른 요청이 대기해야 하는 본질적으로 직렬화되는 작업이다. 이런 상황에서는 논블로킹의 장점이 발휘될 여지가 거의 없다. 오히려 R2DBC의 리액티브 컨텍스트 스위칭 오버헤드만 추가되는 셈이라, 단순한 HikariCP 커넥션 풀 + Virtual Thread 조합이 더 효율적으로 동작했다.</p>
+<p>REDIS_LUA에서는 WebFlux가 앞선다. 논블로킹 Redis 클라이언트(Lettuce)와 R2DBC가 조합되면서 DB 대기 중에도 다른 요청을 처리할 수 있기 때문이다.</p>
+<h2>KAFKA Producer TPS</h2>
+<table><thead><tr><th>Consumer 방식</th><th>WebFlux TPS</th><th>WebFlux p(95)</th><th>MVC TPS</th><th>MVC p(95)</th></tr></thead><tbody><tr><td>PESSIMISTIC Consumer</td><td>2,111/s</td><td>115ms</td><td>15,685/s</td><td>18ms</td></tr><tr><td>LUA Consumer</td><td>2,097/s</td><td>115ms</td><td>9,200/s</td><td>77ms</td></tr></tbody></table>
+<p>KKAFKA 에서 MVC가 압도적이다. 좀 이상한 결과라고는 생각하는데 아마 Reactor Kafka의 스케줄러 오버헤드, 테스트 환경 변수 등이 복합적으로 작용했을 가능성이 있다. 정확한 비교를 위해서는 동일 환경에서 반복 측정이 필요하다.<br/>
+Kafka Producer는 기본적으로 메시지를 내부 배치 버퍼에 넣고 즉시 반환하는 비동기 구조다(acks=1 기준). 즉, API 응답까지의 경로에서 실제 I/O 대기가 거의 없다. 논블로킹이 빛을 발하려면 &quot;오래 걸리는 I/O 대기&quot;가 있어야 하는데, 이 시나리오에는 그게 없다. 결과적으로 MVC + Virtual Thread가 리액티브 오버헤드 없이 그대로 빠르게 처리한다.</p>
+<h2>KAFKA Consumer 처리 시간</h2>
+<table><thead><tr><th>Consumer 방식</th><th>WebFlux</th><th>MVC</th></tr></thead><tbody><tr><td>PESSIMISTIC Consumer</td><td>31초</td><td>36초</td></tr><tr><td>LUA Consumer</td><td>30초</td><td>85초</td></tr></tbody></table>
+<p>Consumer 처리 시간은 WebFlux가 더 빠르다. 특히 LUA Consumer에서 차이가 크다. WebFlux는 R2DBC 비동기 DB 처리로 Consumer 3개가 논블로킹으로 동시에 처리하는 반면, MVC는 블로킹 JDBC로 처리하기 때문이다.</p>
+<p>LUA Consumer에서 MVC가 특히 느린 이유는 Outbox Scheduler 때문이다. Scheduler가 1초마다 PENDING 이벤트를 읽어 DB stock을 차감하는 구조라서 오버헤드가 크다. <code>fixedDelay</code>를 100ms로 줄이면 103초 → 85초로 개선됐지만 대신 TPS가 떨어졌다.</p>
+<hr/>
+<h1>코드 복잡도 비교</h1>
+<p>이번 시리즈를 구현하면서 가장 크게 느낀 점은 코드 복잡도의 차이다.</p>
+<p><strong>WebFlux 비관적 락 재고 차감:</strong></p>
+<pre><code class="language-java">return databaseClient.sql(&quot;SELECT * FROM products WHERE id = :id FOR UPDATE&quot;)
+        .bind(&quot;id&quot;, productId)
+        .map((row, metadata) -&gt; row.get(&quot;stock&quot;, Integer.class))
+        .one()
+        .flatMap(stock -&gt; {
+            if (stock == null || stock &lt;= 0) {
+                return Mono.error(new BusinessException(ErrorCode.PRODUCT_OUT_OF_STOCK));
+            }
+            return databaseClient.sql(&quot;UPDATE products SET stock = stock - 1 WHERE id = :id&quot;)
+                    .bind(&quot;id&quot;, productId)
+                    .fetch()
+                    .rowsUpdated()
+                    .then(productRepository.findById(productId));
+        })
+        .flatMap(product -&gt; defaultOrderService.saveOrder(userId, product, couponIssueId))
+        .as(transactionalOperator::transactional);
+</code></pre>
+<p><strong>MVC 비관적 락 재고 차감:</strong></p>
+<pre><code class="language-java">@Transactional
+public Order createOrder(Long userId, Long productId) {
+    Product product = productRepository.findByIdWithLock(productId)
+            .orElseThrow(() -&gt; new BusinessException(ErrorCode.PRODUCT_NOT_FOUND));
+    if (product.getStock() &lt;= 0) {
+        throw new BusinessException(ErrorCode.PRODUCT_OUT_OF_STOCK);
+    }
+    product.decrementStock();
+    return orderRepository.save(Order.builder()
+            .user(userService.findById(userId))
+            .product(product)
+            .originalPrice(product.getPrice())
+            .finalPrice(product.getPrice())
+            .build());
+}
+</code></pre>
+<p>같은 로직인데 가독성 차이가 크다. WebFlux는 <code>flatMap</code> 체인을 이해하고 <code>TransactionalOperator</code>까지 직접 관리해야 한다.</p>
+<p>@Transactional 자체는 R2DBC에서도 동작하지만, 일반적인 PlatformTransactionManager가 아니라ReactiveTransactionManager(R2dbcTransactionManager) 위에서 동작한다. Spring Boot가 자동 구성해주긴 하지만, 메서드 반환 타입이 반드시 Mono/Flux여야 하고 리액티브 체인 안에서 호출되어야 정상적으로 트랜잭션이 적용된다. MVC처럼 &quot;그냥 붙이면 끝&quot;이 아니라는 점이 함정이라 조심해야한다.</p>
+<p>현재 WebFlux에서는 @Transactional 대신 TransactionalOperator.transactional()로 체인을 감쌌다. 리액티브에서는 트랜잭션 컨텍스트가 Reactor Context를 통해 전파되기 때문에, 이렇게 명시적으로 묶어주는 방식이 더 안전하고 직관적이다.<br/>
+반면, MVC는 그냥 읽히는 대로 동작한다. <code>@Transactional</code> 붙이고 <code>@Lock</code>으로 비관적 락 걸면 끝이다.</p>
+<hr/>
+<h1>느낀 점</h1>
+<p>이번 시리즈를 통해 WebFlux와 MVC + Virtual Thread를 모두 구현해보면서 몇 가지를 느꼈다.</p>
+<p><strong>WebFlux의 강점은 분명하다.</strong> 논블로킹 처리가 진가를 발휘하는 상황, 특히 많은 I/O 대기가 발생하는 환경에서 적은 스레드로 높은 처리량을 낸다. Consumer 처리 시간 비교에서 WebFlux가 일관되게 앞선 것이 그 증거다.</p>
+<p><strong>하지만 대가가 크다.</strong> <code>Mono</code>, <code>Flux</code>, <code>flatMap</code> 체인, <code>subscribe()</code>, <code>TransactionalOperator</code>, <code>ReactiveTransactionManager</code>... 반응형 프로그래밍 패러다임을 팀 전체가 이해하고 있어야 한다. 디버깅도 어렵다. 스택 트레이스가 Netty 내부 구조까지 뒤섞여 나오고, 어디서 에러가 발생했는지 찾기가 힘들다.</p>
+<p><strong>Virtual Thread는 MVC의 동시성 한계를 크게 완화했다.</strong> 이전의 MVC는 블로킹 I/O가 많으면 스레드가 고갈되는 문제가 있었다. Virtual Thread로 이 문제가 해결되면서 MVC도 충분한 동시성을 낼 수 있게 됐다. KAFKA에서 MVC가 WebFlux보다 빠르게 나온 것은 흥미로운 결과다. 실제 원인이 Virtual Thread의 효율성인지, Reactor Kafka의 오버헤드인지, 측정 환경의 변수인지 확실하지 않지만, 적어도 &quot;단순한 비동기 발행&quot;에서는 MVC + Virtual Thread도 충분한 경쟁력을 보여준다는 점은 분명하다.</p>
+<p><strong>&quot;WebFlux를 써야 하는가?&quot;</strong> 에 대한 답은 상황에 따라 다를 것으로 생각된다. 처리량이 극도로 중요하고, 팀이 반응형 프로그래밍에 익숙하다면 WebFlux가 유리하다. 그렇지 않다면 MVC + Virtual Thread가 코드 가독성과 생산성 측면에서 더 현실적인 선택이다.</p>
+<h1>전체 시리즈 마무리</h1>
+<p>단순히 어떤 기술이 빠른지 측정하는 것을 넘어, 각 기술의 트레이드오프를 이해하는 과정이었다. 낙관적 락이 고경쟁 환경에서 처참하게 실패하는 것도, Redis와 DB 사이에 정합성 문제가 왜 발생하는지도, Outbox Pattern이 왜 필요한지도 직접 삽질하면서 이해했다.</p>
+<p>전체 시리즈를 마무리하면서 좀 더 파보고 싶은 것도 보이기 시작했다.</p>
+<ol>
+<li>SagaPattern<br/>
+Outbox는 단일 서비스 안에서 메시지 발행과 DB 트랜잭션의 원자성을 보장하는 패턴이다. 주문 → 결제 → 배송처럼 여러 서비스에 걸친 트랜잭션은 Choreography 방식과 Orchestration 방식의 차이, 보상 트랜잭션 설계, 실패 시 롤백 전략 등 여러 전략을 직접 도전해보고 싶다.</li>
+<li>CQRS + Event Sourcing<br/>
+재고 차감 같은 시나리오에서 읽기와 쓰기 모델을 분리하면 성능과 확장성을 더 끌어올릴 수 있다고 한다. 특히 Event Sourcing과 결합한다면 모든 상태 변경이 이벤트로 남아 감사 로그나 시점 복구가 자연스럽게 가능해진다고 한다. 복잡도가 꽤 있는 패턴이라 들었는데, 어느 규모부터 도입할 가치가 있을지 측정해보고 싶다.</li>
+<li>분산 락의 한계와 대안<br/>
+Redis Lua 스크립트로 이번 시리즈에서 원자성을 확보했지만, Redis가 단일 장애점(SPOF)이 될 수 있다. Redisson의 RedLock, ZooKeeper, etcd 같은 대안들을 비교해보고 각각의 장애 시나리오에서 어떻게 동작하는지도 검증해보면 좋을 것 같다.</li>
+<li>Kafka Exactly-Once Sementics<br/>
+이번 시리즈에선 At-Least-Once를 기반으로 멱등성을 직접 구현했는데, Kafka 트랜잭셔널 프로듀서와 isolation.level=read_committed를 활용한 Exactly-Once 처리도 다뤄보면 좋을 것 같다. 성능 오버헤드와 실제 효용 사이의 트레이드오프를 측정해보고 싶다.</li>
+<li>관측성<br/>
+부하 테스트로 TPS와 p95는 측정했지만, 실제로 병목이 어디인지는 별도 도구가 필요하다. Micrometer + Prometheus + Grafana로 메트릭을 수집하고, OpenTelemetry로 분산 트레이싱을 걸어 WebFlux와 MVC의 내부 동작을 시각화해보면 좋을 것 같다. 원래 이번 시리즈에서 진행하려고 했는데 개인 서버 용량이 마땅치 않아 미루다가 못하게 됐다. 추후 서버를 신규 개설해서 꼭 해봐야겠다.</li>
+</ol>
+<p><strong>기술 선택에 정답은 없다. 상황에 맞는 트레이드오프를 이해하고 선택하는 것이 중요하고 생각한다.</strong></p></article></div></div>
+  </body>
+</html>

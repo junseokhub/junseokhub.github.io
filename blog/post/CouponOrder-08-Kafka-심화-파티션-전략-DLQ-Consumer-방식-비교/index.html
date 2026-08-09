@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 08. Kafka 심화 - 파티션 전략, DLQ, Consumer 방식 비교 | Record, Then Build</title>
+    <meta name="description" content="Intro 7편에서 Kafka Async 방식이 압도적인 처리량을 보여줬다. 그런데 테스트 환경을 자세히 보면 문제가 있었다. 파티션은 3개인데 Consumer는 1개였다. 파티션 2개가 놀고 있는 셈이다." />
+    <meta property="og:title" content="[Coupon&amp;Order] 08. Kafka 심화 - 파티션 전략, DLQ, Consumer 방식 비교 | Record, Then Build" />
+    <meta property="og:description" content="Intro 7편에서 Kafka Async 방식이 압도적인 처리량을 보여줬다. 그런데 테스트 환경을 자세히 보면 문제가 있었다. 파티션은 3개인데 Consumer는 1개였다. 파티션 2개가 놀고 있는 셈이다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-08-Kafka-%EC%8B%AC%ED%99%94-%ED%8C%8C%ED%8B%B0%EC%85%98-%EC%A0%84%EB%9E%B5-DLQ-Consumer-%EB%B0%A9%EC%8B%9D-%EB%B9%84%EA%B5%90/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-08-Kafka-%EC%8B%AC%ED%99%94-%ED%8C%8C%ED%8B%B0%EC%85%98-%EC%A0%84%EB%9E%B5-DLQ-Consumer-%EB%B0%A9%EC%8B%9D-%EB%B9%84%EA%B5%90/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 08. Kafka 심화 - 파티션 전략, DLQ, Consumer 방식 비교</h1><p>Lab/Coupon&amp;Order · 2026-04-30</p><h1>Intro</h1>
+<p>7편에서 Kafka Async 방식이 압도적인 처리량을 보여줬다. 그런데 테스트 환경을 자세히 보면 문제가 있었다. 파티션은 3개인데 Consumer는 1개였다. 파티션 2개가 놀고 있는 셈이다.</p>
+<p>이번 편에서는 파티션을 제대로 활용하고, Consumer 내부에서 재고를 어떻게 처리하느냐에 따라 정합성과 안정성이 어떻게 달라지는지 비교한다. 그리고 실패 메시지를 어떻게 처리할지 DLQ도 구현한다.</p>
+<hr/>
+<h1>파티션 전략</h1>
+<h2>파티션이란?</h2>
+<p>Kafka 토픽은 하나 이상의 파티션으로 나뉜다. 파티션은 Kafka의 병렬 처리 단위다. 메시지는 파티션에 분산되어 저장되고, 각 파티션은 하나의 Consumer에 할당된다.</p>
+<pre><code>order-requests 토픽
+ㄴ Partition 0 -&gt; Consumer 1
+ㄴ Partition 1 -&gt; Consumer 2
+ㄴ Partition 2 -&gt; Consumer 3
+</code></pre>
+<p><strong>핵심 규칙</strong>: Consumer 수가 파티션 수보다 적으면 일부 파티션이 놀게 된다. Consumer 수 = 파티션 수일 때 최대 병렬 처리가 가능하다.</p>
+<h2>기존 문제</h2>
+<p>7편에서는 파티션 3개, Consumer 1개였다. Consumer 1개가 파티션 1개만 담당하고 나머지 2개는 할당되지 않았다.</p>
+<pre><code>order-requests 토픽
+ㄴ Partition 0 -&gt; Consumer 1  ← 혼자 다 처리
+ㄴ Partition 1 -&gt; (미할당)
+ㄴ Partition 2 -&gt; (미할당)
+</code></pre>
+<h2>개선</h2>
+<p>reactor-kafka의 KafkaReceiver 단일 인스턴스로도 파티션 3개를 모두 할당받아 처리할 수 있다. 병렬 처리는 flatMap(processRecord, N)으로 동시 처리 수를 제어한다.</p>
+<pre><code class="language-java">@PostConstruct
+public void start() {
+    subscription = KafkaReceiver.create(receiverOptions)
+            .receive()
+            .flatMap(this::processRecord, 32) // 동시 처리 수 제한
+            .subscribe();
+}
+</code></pre>
+<p>flatMap(processRecord, 32)는 동시에 최대 32개의 메시지를 병렬 처리한다는 의미다. 파티션 3개에서 들어오는 메시지를 reactive 스트림이 알아서 분산 처리한다. Consumer Group의 멤버는 1개지만, Reactor의 비동기 처리로 충분한 병렬성을 얻을 수 있다.</p>
+<pre><code>order-consumer-group
+ㄴ Members: 3
+ㄴ Assigned Partitions: 3
+ㄴ State: STABLE
+</code></pre>
+<p>reactor-kafka에서는 Consumer 인스턴스가 모든 파티션을 받고, reactive 스트림에서 동시 처리량을 조절하는 구조다. 진짜로 Consumer 멤버를 여러 개로 늘리려면 애플리케이션 인스턴스 자체를 여러 개 띄워야 한다.</p>
+<h2>KafkaTopic CRD</h2>
+<p>Strimzi로 Kafka를 운영하는 경우 <code>NewTopic</code> Bean으로 파티션 수를 설정해도 Strimzi가 관리하는 토픽은 적용이 안 될 수 있다. 이때는 <code>KafkaTopic</code> CRD를 직접 사용해야 한다.</p>
+<pre><code class="language-yml">apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: order-requests
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 3
+  replicas: 3
+</code></pre>
+<hr/>
+<h1>Consumer 방식 분리</h1>
+<p>Consumer 3개가 동시에 같은 상품 재고를 처리하면 동시성 문제가 발생한다. 7편에서 단순히 <code>productRepository.save()</code>로 재고를 차감하면 <code>OptimisticLockingFailureException</code>이 터진다. <code>Product</code> 엔티티에 <code>@Version</code>이 있기 때문이다.</p>
+<p>재고 처리 방식에 따라 동시성을 해결하는 방법이 다르다. 3가지 방식으로 분리했다.</p>
+<pre><code class="language-yml">order:
+  consumer-type: PESSIMISTIC  # OPTIMISTIC, LUA
+</code></pre>
+<p>각 방식은 OrderKafkaConsumer 마커 인터페이스를 구현하며, 공통 로직(라이프사이클, 메시지 처리 흐름)은 AbstractOrderKafkaConsumer 추상 클래스에 추출했다.OrderConsumerConfig에서 yml 값에 따라 구현체를 선택한다.</p>
+<pre><code class="language-java">OrderKafkaConsumer consumer = switch (orderProperties.consumerType()) {
+    case OPTIMISTIC -&gt; new OptimisticOrderKafkaConsumer(...);
+    case PESSIMISTIC -&gt; new PessimisticOrderKafkaConsumer(...);
+    case LUA -&gt; new LuaOrderKafkaConsumer(...);
+    default -&gt; throw new IllegalStateException(...);
+};
+</code></pre>
+<hr/>
+<h1>DLQ (Dead Letter Queue)</h1>
+<h2>DLQ</h2>
+<p>DLQ는 처리에 실패한 메시지를 따로 보관하는 토픽이다. Kafka Consumer가 메시지를 처리하다 예외가 발생하면 해당 메시지를 DLQ 토픽으로 보낸다.</p>
+<pre><code>order-requests -&gt; Consumer -&gt; 처리 성공 -&gt; order-results
+                          -&gt; 처리 실패 -&gt; order-requests-dlq
+</code></pre>
+<p>DLQ가 필요한 이유는 세 가지다.</p>
+<p><strong>메시지 유실 방지</strong>: 처리에 실패한 메시지를 그냥 버리면 데이터가 사라진다. DLQ에 보관하면 나중에 재처리할 수 있다.</p>
+<p><strong>운영 가시성</strong>: DLQ 메시지 수를 모니터링하면 시스템 이상 여부를 빠르게 파악할 수 있다. DLQ가 쌓이면 Consumer에 문제가 있다는 신호다.</p>
+<p><strong>재처리 가능성</strong>: DLQ의 메시지를 분석하고 원인을 수정한 뒤 재처리할 수 있다.</p>
+<h2>DLQ 구현</h2>
+<pre><code class="language-java">public void sendToDlq(Object message) {
+    try {
+        String payload = objectMapper.writeValueAsString(message);
+        kafkaSender.send(Mono.just(SenderRecord.create(
+                        new ProducerRecord&lt;&gt;(&quot;order-requests-dlq&quot;, payload),
+                        &quot;dlq&quot;
+                )))
+                .next()
+                .doOnSuccess(r -&gt; log.warn(&quot;DLQ로 메시지 이동 완료&quot;))
+                .doOnError(e -&gt; log.error(&quot;DLQ 발행 실패: {}&quot;, e.getMessage()))
+                .subscribe();
+    } catch (Exception e) {
+        log.error(&quot;DLQ 직렬화 실패: {}&quot;, e.getMessage());
+    }
+}
+</code></pre>
+<h2>DLQ 설계 시 주의점</h2>
+<p>처음에 재고 소진(<code>PRODUCT_OUT_OF_STOCK</code>)도 DLQ로 보냈다. 그러자 DLQ에 수십만 건이 쌓였다. 재고 10,000개에 436,000건이 요청됐으니 426,000건이 전부 DLQ로 간 것이다.</p>
+<p>재고 소진은 에러가 아니라 정상적인 비즈니스 로직이다. DLQ는 진짜 예외 상황에서만 사용해야 한다.</p>
+<pre><code class="language-java">public void handleError(Throwable e, OrderMessage orderMessage) {
+    if (e instanceof BusinessException be &amp;&amp;
+            (be.getErrorCode() == ErrorCode.PRODUCT_OUT_OF_STOCK ||
+             be.getErrorCode() == ErrorCode.PRODUCT_ORDER_FAILED)) {
+        // 재고 소진, 재시도 한계 도달 -&gt; 정상 비즈니스 로직, DLQ 불필요
+        log.warn(&quot;주문 처리 불가: {}&quot;, e.getMessage());
+    } else {
+        // 진짜 예외 -&gt; DLQ로
+        log.error(&quot;주문 처리 최종 실패, DLQ로 이동: {}&quot;, e.getMessage());
+        sendToDlq(orderMessage);
+    }
+}
+</code></pre>
+<p>수정 후 테스트에서 DLQ는 0건이었다.</p>
+<h2>R2DBC 트랜잭션 주의</h2>
+<p>R2DBC에서 @Transactional은 일반적인 PlatformTransactionManager가 아니라ReactiveTransactionManager(R2dbcTransactionManager) 위에서 동작한다.Spring Boot가 자동 구성해주긴 하지만, 메서드 반환 타입이 반드시 Mono/Flux여야 하고 리액티브 체인 안에서 호출되어야 정상적으로 트랜잭션이 적용된다. MVC처럼 &quot;그냥 붙이면 끝&quot;이 아니라는 점이 함정이라 조심해야 한다.</p>
+<hr/>
+<h1>테스트 결과</h1>
+<h2>Producer 속도 (k6)</h2>
+<p>Producer 속도는 PESSIMISTIC과 LUA 두 방식 모두 비슷하게 나왔다. Kafka라서 Consumer 처리 방식과 무관하게 토픽에 발행하고 즉시 응답하기 때문이다.</p>
+<table><thead><tr><th><strong>Consumer 방식</strong></th><th><strong>처리량</strong></th><th><strong>p(95)</strong></th></tr></thead><tbody><tr><td>PESSIMISTIC</td><td>2,111/s</td><td>115ms</td></tr><tr><td>LUA</td><td>2,097/s</td><td>115ms</td></tr><tr><td>OPTIMISTIC</td><td>처리 불가</td><td>-</td></tr></tbody></table>
+<h3>Consumer 처리 시간</h3>
+<table><thead><tr><th><strong>Consumer 방식</strong></th><th><strong>10,000건 처리시간</strong></th></tr></thead><tbody><tr><td>PESSIMISTIC</td><td>31초</td></tr><tr><td>LUA</td><td>30초</td></tr><tr><td>OPTIMISTIC</td><td>처리 불가</td></tr></tbody></table>
+<h3>Consumer 처리 결과</h3>
+<table><thead><tr><th><strong>Consumer 방식</strong></th><th><strong>orders</strong></th><th><strong>DB stock</strong></th><th><strong>DLQ</strong></th><th><strong>정합성</strong></th></tr></thead><tbody><tr><td>PESSIMISTIC</td><td>10,000</td><td>0</td><td>0</td><td>완벽</td></tr><tr><td>LUA</td><td>10,000</td><td>10,000</td><td>0</td><td>불일치</td></tr><tr><td>OPTIMISTIC</td><td>처리 불가</td><td>-</td><td>-</td><td>-</td></tr></tbody></table>
+<h2>PESSIMISTIC</h2>
+<p><code>SELECT FOR UPDATE</code>로 락을 걸고 순차 처리한다. Consumer 3개가 동시에 요청해도 락 대기 후 순서대로 처리되기 때문에 정합성이 완벽하게 보장된다. DLQ도 0건이었다.</p>
+<h2>LUA</h2>
+<p>Redis Lua 스크립트로 원자적으로 재고를 차감하고 DB에 주문을 저장한다. Consumer 처리는 빠르지만 Redis stock은 0으로 소진됐는데 DB stock은 10,000 그대로였다. Redis와 DB 사이의 정합성이 깨진 것이다.</p>
+<p>Redis에서 재고 차감에 성공했지만 DB 주문 저장이 실패하거나, Redis 재고가 소진됐는데 DB에는 반영이 안 된 경우가 발생한다. 트랜잭션으로 묶을 수 없는 Redis와 DB의 근본적인 한계다.</p>
+<h2>OPTIMISTIC</h2>
+<p>Consumer 3개가 동시에 같은 상품을 처리하면서 <code>OptimisticLockingFailureException</code>이 폭발적으로 발생했다. 재시도 3회 소진 후 <code>PRODUCT_ORDER_FAILED</code>로 처리되는데, 이 과정이 반복되면서 Consumer 처리가 사실상 마비됐다. 테스트를 강제 종료했다.</p>
+<p>낙관적 락은 충돌이 적은 환경을 가정한다. Consumer 3개가 동시에 같은 레코드를 건드리는 상황은 낙관적 락에 맞지 않는다.</p>
+<hr/>
+<h1>정리</h1>
+<p>Consumer 방식 선택은 정합성 요구 사항에 따라 달라진다.</p>
+<p><strong>PESSIMISTIC</strong>은 정합성이 완벽하게 보장되고 안정적이다. DB만으로 모든 걸 처리할 때 선택할 수 있는 방식이다.</p>
+<p><strong>LUA</strong>는 빠르지만 Redis-DB 정합성 문제가 있다. 이 문제는 9편에서 다룬다.</p>
+<p><strong>OPTIMISTIC</strong>은 Consumer 환경의 고경쟁 상황에서 실사용이 불가능하다.</p>
+<hr/>
+<h1>Next</h1>
+<ul>
+<li>Redis Lua 데이터 정합성 해결</li>
+</ul></article></div></div>
+  </body>
+</html>

@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>idempotence | Record, Then Build</title>
+    <meta name="description" content="Intro 메시지를 처리하다 보면, 분명 한 번만 보낸 것 같은데 같은 메시지가 또 오는 경우가 있다. 처음엔 어디서 잘못 보낸 거 아닌가? 싶었는데, 알고 보니 이건 시스템이 잘못 동작한 게 아니라 애초에 그렇게 설계되는 경우가 많" />
+    <meta property="og:title" content="idempotence | Record, Then Build" />
+    <meta property="og:description" content="Intro 메시지를 처리하다 보면, 분명 한 번만 보낸 것 같은데 같은 메시지가 또 오는 경우가 있다. 처음엔 어디서 잘못 보낸 거 아닌가? 싶었는데, 알고 보니 이건 시스템이 잘못 동작한 게 아니라 애초에 그렇게 설계되는 경우가 많" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/idempotence/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/idempotence/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>idempotence</h1><p>Computer Science · 2026-07-04</p><h1>Intro</h1>
+<p>메시지를 처리하다 보면, 분명 한 번만 보낸 것 같은데 같은 메시지가 또 오는 경우가 있다. 처음엔 어디서 잘못 보낸 거 아닌가? 싶었는데, 알고 보니 이건 시스템이 잘못 동작한 게 아니라 애초에 그렇게 설계되는 경우가 많다는 걸 알게 됐다.</p>
+<p>문제는 이걸 안다고 끝나는 게 아니라는 거다. 같은 메시지가 두 번 왔을 때 처리하는 쪽에서 똑같은 일을 두 번 해버리면, 그게 바로 데이터 오류로 이어진다. 특히 적립이나 차감처럼 누적되는 연산일수록 두 번 실행됐을 때 피해가 크다. 그래서 <strong>같은 메시지가 와도 두 번 처리한 것처럼 되면 안 된다</strong>는 걸 어떻게 만들어야 하는지 알아보려고 한다.</p>
+<p>우선 왜 같은 메시지가 두 번 오는지부터 감을 잡고, 그 다음에 실제로 어떻게 막을 수 있는지(자연키 제약, catch로 넘기기, 멱등한 연산, 버전 번호, Inbox)를 하나씩 알아보자.</p>
+<hr/>
+<h1>왜 같은 메시지가 두 번 오는 걸까?</h1>
+<p>메시지를 받아서 처리하는 쪽은 보통 이런 순서로 움직인다.</p>
+<pre><code class="language-bash">메시지 받음 -&gt; 처리 -&gt; 다 처리했어요 라고 알려줌
+</code></pre>
+<p>여기서 중요한 건, 처리랑 처리했다고 알려주는 것이 서로 다른 두 단계라는 거다. 그리고 이 둘 사이에는 시간차가 있다.</p>
+<p>문제는 이 알려주는 단계에서 생긴다. 처리는 이미 다 끝났는데, 다 끝났다는 신호가 보낸 쪽한테 도착하기 전에 처리하던 서버가 죽거나, 네트워크가 끊기거나, 잠깐 응답이 느려서 타임아웃이 나버리면 어떻게 될까? 보낸 쪽은 신호를 못 받았으니까 어? 아직 처리 안 됐나보다 하고 똑같은 메시지를 다시 보낸다.*실제로는 처리가 끝났는데 말이다.</p>
+<pre><code class="language-bash">[받음] -&gt; [처리 완료] -&gt; [알려주는 중 네트워크 끊김]
+                              |
+                    보낸쪽: 응답이 안오네, 다시 보내자
+                              |
+                     -&gt; 이미 처리된 메시지가 또 온다
+</code></pre>
+<p>이렇게 처리했다고 알려주는 것을 보통 <code>ack</code>(acknowledge, 확인 응답) 또는 <code>commit</code>이라고 부른다. 이름은 여러 개지만 다 같은 얘기다.
+나 이거 처리 다 했어요를 상대한테 전달하는 절차라는 말이다.</p>
+<h2>이게 실제로 어떤 모습으로 나타날까?</h2>
+<p>이름은 다른데 구조는 똑같은 몇 가지 예를 찾아봤다.</p>
+<ul>
+<li>Kafka
+<ul>
+<li>여기까지 읽었다는 오프셋을 커밋하는 방식인데, 커밋 전에 컨슈머가 죽거나 그룹 재조정(rebalance)이 일어나면, 이미 처리된 메시지를 다른 컨슈머가 이어서 다시 읽는다</li>
+</ul>
+</li>
+<li>큐 계열 (RabbitMQ, SQS 등)
+<ul>
+<li>메시지를 꺼내서 처리하고 명시적으로 ack를 보내는 방식인데, ack 보내기 전에 시간이 초과(visibility timeout)되면 큐는 실패했나보다 하고 같은 메시지를 다시 내보낸다</li>
+</ul>
+</li>
+<li>웹훅 (HTTP 콜백)
+<ul>
+<li>호출한 쪽이 응답을 기다리다가 타임아웃이 나거나 네트워크가 끊기면, 실제로는 받는 쪽이 처리를 끝냈어도 호출한 쪽은 실패로 보고 같은 요청을 재시도한다</li>
+</ul>
+</li>
+</ul>
+<p>기술 이름은 다 다른데 구조는 완전히 똑같다. 처리 완료를 알리는 확인 절차가 있고, 그 확인이 사라질 수 있는 경로라면, 그 채널은 예외 없이 중복 가능성을 갖는다.</p>
+<h2>미리 알 수 없을 땐 어떻게 판단해야 할까?</h2>
+<p>매번 기술 문서를 뒤져서 이게 정확히 어떤 전달 방식을 쓰는지를 확인할 여유가 없을 때가 많다. 이럴 땐 판단 기준을 이렇게 뒤집는 게 안전한 것 같다.</p>
+<ul>
+<li>확인/응답 단계가 존재하는가부터 본다.
+<ul>
+<li>수신자가 뭔가를 되돌려줘야(ack, 커밋, HTTP 200 응답 등) 발신자가 성공을 인지하는 구조라면, 그 확인이 늦거나 사라질 가능성은 항상 있다고 본다.</li>
+</ul>
+</li>
+<li>문서에 재전송, redelivery, at-least-once 같은 단어가 보이면 중복은 확정이라고 생각하면 된다.</li>
+<li>판단이 잘 안 서면, 유실보다는 중복을 가정하고 가는 게 안전하다. 대부분의 실무 메시징 시스템은 유실은 피하고 중복은 감수하는 쪽을 기본값으로 두는 경우가 많다고 한다.</li>
+</ul>
+<p>그러니까 카프카라서 조심해야 하는 게 아니라, 처리 확인 절차가 있고 그게 실패하면 재전송되는 구조인가만 보면 될 것 같다.</p>
+<hr/>
+<h1>그래서 멱등성이 뭔데?</h1>
+<p>같은 요청을 여러 번 해도 결과가 한 번 한 것과 똑같은 성질을 멱등성이라고 한다. 이 값을 5로 만들어라는 몇 번을 해도 결과가 항상 5니까 멱등하고, 이 값에 5를 더해라는 할 때마다 결과가 바뀌니까 멱등하지 않다.</p>
+<p>중복을 완전히 막는 건 현실적으로 너무 비싸거나 불가능하다고 한다. 그래서 접근을 바꿔서 중복이 안 오게 막자가 아니라 <strong>중복이 와도 결과가 똑같이 나오게 만들자</strong>로 가는 게 맞는 것 같다. 그 방법들을 알아보자.</p>
+<h2>DB한테 유일성을 맡기기 (자연키 제약)</h2>
+<p>제일 먼저 볼 곳은 여기인 것 같다. 새로 뭘 만들지 않고, 이미 있는 DB 제약을 활용하는 방법이다.</p>
+<p>메시지가 가리키는 대상이 원래부터 고유해야 하는 값(자연키)을 갖고 있다면, 그 값에 유일성 제약(unique constraint)을 걸어버리면 된다.</p>
+<pre><code class="language-java">@Entity
+@Table(
+    name = &quot;result_table&quot;,
+    uniqueConstraints = @UniqueConstraint(columnNames = {&quot;target_id&quot;, &quot;action_type&quot;})
+)
+public class ResultEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String targetId;
+    private String actionType;
+    private String payload;
+
+    // 생성자, getter 생략
+}
+</code></pre>
+<pre><code class="language-java">public interface ResultRepository extends JpaRepository&lt;ResultEntity, Long&gt; {
+}
+</code></pre>
+<p>같은 메시지가 두 번 들어와도, 두 번째는 <code>(target_id, action_type)</code> 조합의 유일성 제약 위반으로 걸린다. DB가 대신 멱등성을 지켜주는 셈이다. 처리 결과가 DB에 남고 이렇게 자연스러운 키로 표현할 수 있는 상황이면 웬만하면 여기부터 검토하는 게 맞는 것 같다. 다만, 이런 자연키가 없거나 처리 결과가 DB 밖에 있는 경우엔 못 쓴다.</p>
+<hr/>
+<h2>걸리면 그냥 넘기기 (try-catch)</h2>
+<p>위의 방법으로 제약을 걸었으면, 실제 코드에서는 그 위반을 그냥 잡아서 넘기는 방식으로 처리하면 된다.</p>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+public class ResultService {
+
+    private final ResultRepository resultRepository;
+
+    @Transactional
+    public void handle(String targetId, String actionType, String payload) {
+        try {
+            resultRepository.save(new ResultEntity(targetId, actionType, payload));
+        } catch (DataIntegrityViolationException e) {
+            // 이미 처리된 거니까 그냥 넘어간다
+            log.info(&quot;이미 처리된 대상: targetId={}, actionType={}&quot;, targetId, actionType);
+            return;
+        }
+        // 정상 처리 후속 로직
+    }
+}
+</code></pre>
+<p>여기서 중요한 건 <strong>뭘 잡아서 넘기느냐</strong>인 것 같다. 위 코드처럼 Spring Data가 던져주는 <code>DataIntegrityViolationException</code>(제약 위반일 때 나는 예외)만 정확히 잡아서 넘기는 건 괜찮은 방법이다. 근데 가끔 그냥 <code>catch (Exception e) { }</code> 처럼 통째로 잡아서 아무것도 안 하고 넘겨버리는 코드도 보이는데, 이건 위험하다. 진짜 다른 문제(DB 연결이 끊겼거나, 코드에 버그가 있거나)가 나도 조용히 삼켜버리기 때문이다. 중복이라서 나는 특정 예외만 골라서 넘기고, 나머지는 그대로 터지게 둬야 나중에 진짜 문제를 놓치지 않는다.</p>
+<p>근데 이 코드, 겉보기엔 멀쩡한데 실제로는 함정이 하나 있다. 같은 트랜잭션 안에서 예외를 catch해서 넘기는 게 항상 안전하진 않다. 이건 아래에 따로 정리했다. 이 부분만 조심하면 별도 로직 없이 코드 몇 줄로 바로 처리할 수 있다는 게 제일 큰 장점인 것 같다.</p>
+<hr/>
+<h2>버전 번호로 순서를 강제하기 (@Version)</h2>
+<p>대상에 버전(순번)이 있다면, 버전이 증가하는 순서로만 처리를 허용하면 된다. 낮은 버전을 요구하는 중복 메시지는 자연히 걸러진다. Spring Data JPA는 <code>@Version</code> 애노테이션으로 이걸 바로 지원한다.</p>
+<pre><code class="language-java">@Entity
+public class TargetEntity {
+
+    @Id
+    private Long id;
+
+    private String status;
+
+    @Version
+    private Long version;   // 낙관적 락용 버전 컬럼
+}
+</code></pre>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+public class TargetService {
+
+    private final TargetRepository targetRepository;
+
+    @Transactional
+    public void updateStatus(Long id, String newStatus, long expectedVersion) {
+        TargetEntity target = targetRepository.findById(id).orElseThrow();
+        try {
+            target.setStatus(newStatus);
+            targetRepository.saveAndFlush(target);  // 버전이 안 맞으면 여기서 예외
+        } catch (OptimisticLockingFailureException e) {
+            // 이미 처리됐거나 순서가 어긋난 중복 메시지 -&gt; 무시
+            log.info(&quot;버전 충돌, 중복 또는 순서 어긋남으로 판단: id={}&quot;, id);
+        }
+    }
+}
+</code></pre>
+<p><code>@Version</code>은 원래 동시성 제어(낙관적 락)를 위해 쓰는 방식인데, 오래된 버전을 요구하는 중복 메시지도 걸러주는 효과가 있다. 여기서도 예외가 터지면 그냥 넘기는 방법과 똑같은 이유로 트랜잭션 오염 문제가 생길 수 있는데, 이것 또한 아래에 같이 정리했다. 대상에 이미 버전 개념이 있거나 순서 보장이 중요한 도메인이면 잘 맞지만, 그렇게까지 복잡할 필요 없는 단순한 도메인에서는 버전 컬럼을 새로 들이는 것 자체가 배보다 배꼽이 커지는 느낌이다.</p>
+<p>여기까지는 비즈니스 로직내에서 해결하면서, 새로운 인프라를 추가하지 않는다는 거다. 이미 있는 데이터 모델이랑 제약(그리고 Spring Data가 이미 지원하는 기능)을 그대로 활용한다. 그래서 가능하면 여기서 먼저 답을 찾아보는 게 맞는 것 같다.</p>
+<h2>그래도 안 되면 Inbox</h2>
+<p>위 방법들이 통하려면, 처리했다는 사실이 DB에 유일성을 걸 수 있는 형태로 남아야 한다. 근데 항상 그런 건 아니다.</p>
+<ul>
+<li>처리 결과가 DB 쓰기가 아니라 외부로 나가는 부수효과(외부 API 호출, 알림 발송 등)일 때.
+<ul>
+<li>그 바깥 시스템에 유일성 제약을 걸 방법이 없다.</li>
+</ul>
+</li>
+<li>처리가 여러 단계로 복잡해서, 하나의 제약으로 &quot;이미 처리했음&quot;을 표현하기 어려울 때.</li>
+<li>처리 로직은 그대로 두고, 받는 쪽에서 아예 중복을 걸러내고 싶을 때.</li>
+</ul>
+<p>이럴 때 쓰는 게 <code>Inbox</code> 패턴이다. 받은 메시지의 식별자를 별도 테이블에 먼저 기록해두고, 그 식별자가 이미 있으면 처리를 건너뛰는 방식이다.</p>
+<pre><code class="language-java">@Entity
+public class InboxEntity {
+
+    @Id
+    private String eventId;   // 메시지의 고유 식별자
+
+    private LocalDateTime processedAt;
+}
+</code></pre>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+public class MessageHandlerService {
+
+    private final InboxRepository inboxRepository;
+    private final SomeExternalClient externalClient;
+
+    @Transactional
+    public void handle(Message message) {
+        try {
+            inboxRepository.save(new InboxEntity(message.eventId(), LocalDateTime.now()));
+        } catch (DataIntegrityViolationException e) {
+            return;  // 이미 기록된 이벤트 -&gt; 처리하지 않고 끝
+        }
+        // 같은 트랜잭션 안에서 실제 처리로 이어진다
+        doActualProcessing(message);
+    }
+}
+</code></pre>
+<p>여기서 기록이랑 실제 처리는 반드시 같은 트랜잭션(<code>@Transactional</code>) 안에서 같이 묶여야 한다. 따로 떨어지면 기록은 됐는데 처리는 안되는 또다른 어긋남이 생긴다. 다만 처리가 외부 API 호출처럼 트랜잭션에 안 들어오는 부수효과라면, 이 원자성이 완벽하게 보장되진 않는다는 점도 감안해야 할 것 같다.
+이 경우는 재시도와 결과 기록을 조합해서 별도로 더 다뤄볼 만한 주제인 것 같다.</p>
+<p>Inbox는 어디서든 통하는 범용적인 방법이지만, 메시지마다 테이블 쓰기가 하나 더 붙고, 그 기록을 언제까지 갖고 있을지도 따로 정해야 한다. 비즈니스 로직내에서 이미 해결되는 상황에 Inbox까지 얹으면, 같은 걸 두 번 보장하느라 비용만 늘어나는 셈이다.</p>
+<hr/>
+<h1>트랜잭션 오염 조심하기</h1>
+<p>예외를 넘기는(try-catch) 방법 버전으로 관리하는 것처럼 같은 트랜잭션 안에서 예외를 catch해서 넘기는 방식은, 겉보기엔 문제없어 보여도 트랜잭션이 이미 망가진 상태로 남아있을 수 있다.왜 이게 생기고, 어떻게 막을 수 있는지 정리해봤다.</p>
+<h2>왜 catch를 했는데도 트랜잭션이 망가질까?</h2>
+<p><code>save()</code>가 예외를 던지려면 실제로 DB에 INSERT/UPDATE가 나가야 한다(flush). 근데 이 flush가 언제 일어나는지가 상황에 따라 다르다. ID 생성 전략이 <code>IDENTITY</code>면 <code>save()</code> 호출 즉시 flush돼서 예외가 그 자리에서 바로 잡히지만, <code>SEQUENCE</code>나 배치 처리 상황이면 Hibernate가 insert를 미뤄뒀다가 트랜잭션 커밋 시점에 flush하면서 예외를 던질 수 있다. 이러면 try-catch가 이미 지나간 뒤라 못 잡는다.</p>
+<p>그리고 즉시 flush돼서 catch가 되더라도 끝이 아니다. flush 중 예외가 나면 그 트랜잭션이 내부적으로 커밋 불가능한 상태로 마크될 수 있는데, 애플리케이션 코드에서 catch해서 넘겨도 트랜잭션 자체는 이미 망가져 있을 수 있다. 그러면 이후에 같은 트랜잭션에서 다른 DB 작업을 더 하려고 할 때 <code>UnexpectedRollbackException</code> 같은 예외가 터지거나, PostgreSQL이라면 &quot;current transaction is aborted&quot; 에러로 그 트랜잭션의 나머지 쿼리가 전부 거부된다.</p>
+<p>여기서 <code>noRollbackFor</code>를 떠올릴 수 있는데, 이건 이 문제를 안 풀어준다. <code>noRollbackFor</code>는 예외가 트랜잭션 경계 밖으로 빠져나갈 때 그래도 롤백하지 말아라를 정하는 옵션이라, 지금처럼 메서드 안에서 catch해서 삼키는 상황엔 처음부터 적용될 일이 없다.</p>
+<p>참고로 이 flush 중 에러가 나면 트랜잭션 전체가 못 쓰게 되는 정도는 DB마다도 다르다. MySQL(InnoDB)은 대체로 관대한 편이라, unique 제약 위반 같은 에러가 나도 그 문장(statement)만 실패하고 트랜잭션 자체는 계속 살아있는 경우가 많다 — 그래서 지금 이 글의 <code>try-catch</code> 예제들이 MySQL 기준으로는 대부분 별문제 없이 동작한다. 반면 PostgreSQL은 트랜잭션 안에서 에러가 한 번이라도 나면, 그 뒤로는 <code>ROLLBACK</code>(또는 <code>SAVEPOINT</code>까지의 롤백)을 하기 전까지 같은 트랜잭션의 모든 쿼리를 거부해버린다. 같은 코드가 MySQL에서는 잘 되다가 PostgreSQL로 옮기면 안 될 수 있다는 뜻이라, 이 방식을 쓸 땐 지금 쓰는 DB가 이런 에러 후 트랜잭션 상태를 어떻게 다루는지 확인해두는 게 좋을 것 같다.</p>
+<h2>noRollbackFor는 그럼 언제 쓰는 건데?</h2>
+<p>방금 catch해서 삼키는 상황엔 noRollbackFor가 적용될 일이 없다고 했는데, 그럼 이 옵션은 대체 어디서 쓰라고 있는 걸까 궁금해졌다.</p>
+<p><code>noRollbackFor</code>가 실제로 힘을 발휘하는 상황은, 예외를 메서드 안에서 완전히 삼키지 않고, 트랜잭션 경계 밖으로 내보내는 경우이다. Spring의 <code>@Transactional</code>은 기본적으로 <code>RuntimeException</code>이 메서드를 빠져나가면 트랜잭션 전체를 롤백해버리는데, 이 특정 예외만큼은 그렇게 하지 말라고 미리 정해두는 게 <code>noRollbackFor</code>다.</p>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+public class ResultService {
+
+    private final ResultRepository resultRepository;
+    private final OutboxAppender outboxAppender;
+
+    // 이 메서드는 예외를 안에서 삼키지 않는다.
+    // 대신 이 예외가 나가더라도 트랜잭션은 롤백하지 말라고 클래스 레벨에서 미리 정해뒀다.
+    @Transactional(noRollbackFor = DataIntegrityViolationException.class)
+    public void handle(String targetId, String actionType, String payload) {
+        resultRepository.saveAndFlush(new ResultEntity(targetId, actionType, payload));
+        // 저장이 성공했을 때만 여기까지 온다. 실패(중복)하면 예외가 그대로 메서드 밖으로 나간다
+        // 근데 noRollbackFor 덕분에 이 트랜잭션 안에서 이미 커밋됐어야 할 다른 작업(예: 로그 기록)까지 같이 날아가지 않는다.
+        outboxAppender.append(...);
+    }
+}
+</code></pre>
+<p>이게 실제로 쓸모 있는 상황은, 하나의 트랜잭션 메서드 안에 중복이면 실패해도 괜찮은 작업과 그거랑 무관하게 반드시 성공해야 하는 다른 작업이 섞여 있을 때인 것 같다. 근데 사실 이 경우도 흔치는 않다. 실무에서 더 자주 보이는 패턴은, 오히려 catch로 삼키는 것과 noRollbackFor를 같이 쓰는 조합이다.</p>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ResultService {
+
+    private final ResultRepository resultRepository;
+
+    // catch로 삼키는데 noRollbackFor도 같이 걸려있다. 왜 둘 다 필요할까?
+    @Transactional(noRollbackFor = DataIntegrityViolationException.class)
+    public void handle(String targetId, String actionType, String payload) {
+        try {
+            resultRepository.saveAndFlush(new ResultEntity(targetId, actionType, payload));
+        } catch (DataIntegrityViolationException e) {
+            Throwable cause = e.getRootCause();
+            if (cause instanceof SQLException sqlEx &amp;&amp; sqlEx.getErrorCode() == 1062) {
+                log.info(&quot;중복된 요청 감지 - 멱등성 통과 처리: targetId={}&quot;, targetId);
+                return;
+            }
+            throw e;   // 1062(중복)가 아닌 다른 정합성 에러는 그대로 던져서 롤백을 유도
+        }
+    }
+}
+</code></pre>
+<p><code>saveAndFlush()</code>로 예외를 즉시 발생시켜서 그 안에서 catch로 잡고, 진짜 중복(1062)일 때만 조용히 넘기고, 그 외의 정합성 에러는 다시 던진다. 이렇게 다시 던지는 경우를 대비해서 <code>noRollbackFor</code>를 같이 걸어두는 거다.
+catch 안에서 처리하지 못하고 결국 예외가 메서드 밖으로 나가야 하는 예외적인 경로를 위한 이중 안전장치인 셈이다. 평소엔(중복이 나서 catch로 끝날 땐) <code>noRollbackFor</code>가 개입할 일이 없지만, 혹시라도 예상 못 한 형태로 예외가 새어나갈 때를 대비해서 적어도 이 타입의 예외 때문에 전체가 롤백되진 않게 미리 방어선을 쳐두는 것 같다.</p>
+<h2>오염 범위를 별도 트랜잭션으로 격리하기</h2>
+<p>문제가 되는 삽입/수정 시도를 아예 별도 트랜잭션으로 떼어내면, 거기서 실패해도 그 작은 트랜잭션만 죽고 바깥 트랜잭션은 깨끗하게 남는다. <code>Propagation.REQUIRES_NEW</code>를 쓰면 되는데, 한 가지 꼭 지켜야 할 게 있다.</p>
+<p>반드시 다른 클래스(빈)를 통해 호출해야 한다.</p>
+<pre><code class="language-java">@Component
+@RequiredArgsConstructor
+public class ResultInboxWriter {
+
+    private final ResultRepository resultRepository;
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean tryInsert(String targetId, String actionType, String payload) {
+        try {
+            resultRepository.save(new ResultEntity(targetId, actionType, payload));
+            return false;
+        } catch (DataIntegrityViolationException e) {
+            return true;   // 중복이었다는 뜻
+        }
+    }
+}
+</code></pre>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+public class ResultService {
+
+    private final ResultInboxWriter resultInboxWriter;
+
+    @Transactional
+    public void handle(String targetId, String actionType, String payload) {
+        boolean isDuplicate = resultInboxWriter.tryInsert(targetId, actionType, payload);
+        if (isDuplicate) {
+            return;
+        }
+        // 정상 처리 후속 로직
+    }
+}
+</code></pre>
+<p>같은 클래스 안에서 <code>this.tryInsert(...)</code>처럼 자기 자신을 호출하면 Spring의 AOP 프록시를 안 거치고 직접 호출돼서, <code>@Transactional(REQUIRES_NEW)</code>가 적용이 안 된다(self-invocation 문제). 그래서 <code>ResultInboxWriter</code>처럼 별도 빈으로 분리해서, <code>ResultService</code>가 프록시를 통해 호출하게 만들어야 한다.</p>
+<p>이렇게 하면 오염 범위를 확실하게 끊을 수 있고, 기존 JPA/Hibernate 코드도 그대로 유지할 수 있다. 다만 이 격리를 위해 클래스를 하나 더 나눠야 하는 구조적인 비용이 따라오고, <code>REQUIRES_NEW</code>는 새로운 DB 커넥션을 하나 더 열어서 쓰기 때문에 트래픽이 몰리면 커넥션 풀에 부담이 될 수 있다.</p>
+<h2>애초에 예외가 안 나게, DB의 upsert 문법 쓰기</h2>
+<p>예외를 catch하는 대신, DB한테 있으면 무시하고, 없으면 넣어버려 라고 직접 시켜버리는 방법도 있다. 이러면 애초에 예외가 안 나니까 트랜잭션이 오염될 여지도 없다. DB마다 문법이 다르다.</p>
+<pre><code class="language-sql">-- MySQL
+INSERT IGNORE INTO result_table (target_id, action_type, payload)
+VALUES (:targetId, :actionType, :payload);
+
+-- 또는 MySQL, 충돌 시 특정 컬럼만 갱신하고 싶다면
+INSERT INTO result_table (target_id, action_type, payload)
+VALUES (:targetId, :actionType, :payload)
+ON DUPLICATE KEY UPDATE payload = :payload;
+
+-- PostgreSQL
+INSERT INTO result_table (target_id, action_type, payload)
+VALUES (:targetId, :actionType, :payload)
+ON CONFLICT (target_id, action_type) DO NOTHING;
+
+-- Oracle
+MERGE INTO result_table t
+USING (SELECT :targetId AS target_id, :actionType AS action_type FROM dual) s
+ON (t.target_id = s.target_id AND t.action_type = s.action_type)
+WHEN NOT MATCHED THEN
+  INSERT (target_id, action_type, payload) VALUES (:targetId, :actionType, :payload);
+
+-- SQL Server
+MERGE INTO result_table AS t
+USING (SELECT :targetId AS target_id, :actionType AS action_type) AS s
+ON (t.target_id = s.target_id AND t.action_type = s.action_type)
+WHEN NOT MATCHED THEN
+  INSERT (target_id, action_type, payload) VALUES (:targetId, :actionType, :payload);
+</code></pre>
+<p>Spring에서는 이런 네이티브 쿼리를 <code>@Modifying</code> + <code>@Query(nativeQuery = true)</code>로 감싸서 쓰면 된다.</p>
+<pre><code class="language-java">public interface ResultRepository extends JpaRepository&lt;ResultEntity, Long&gt; {
+
+    @Modifying
+    @Query(value = &quot;&quot;&quot;
+        INSERT IGNORE INTO result_table (target_id, action_type, payload)
+        VALUES (:targetId, :actionType, :payload)
+        &quot;&quot;&quot;, nativeQuery = true)
+    void insertIgnore(String targetId, String actionType, String payload);
+}
+</code></pre>
+<p>이 방식은 예외 자체가 안 나기 때문에 트랜잭션 오염이라는 문제가 원천적으로 생기지 않는다. 삽입이 몰리는 상황에서 예외 처리 자체의 오버헤드도 덜 수 있다. 다만 DB마다 문법이 다르다 보니, 지금은 MySQL로 짜둔 쿼리를 나중에 다른 DB로 옮기면 그대로 못 쓴다는 이식성 문제가 있고, 네이티브 쿼리를 쓰는 만큼 JPA 엔티티 매핑이 주는 편의도 일부 포기하게 된다.</p>
+<p>정리하면, 트랜잭션을 나누는 게 근본적인 안전장치고, DB 문법으로 우회하는 것이 가장 깔끔하게 오염 자체를 없애는 방법인 것 같다. 둘 다 못 쓰는 상황이라면 최소한 <code>REQUIRES_NEW</code> 격리 정도는 챙기는 게 안전하다.</p>
+<hr/>
+<h1>그래서 뭐가 제일 빠른데?</h1>
+<p>여기까지 정리한 네 가지 방식(같은 트랜잭션에서 catch + noRollbackFor / INSERT IGNORE / REQUIRES_NEW / Inbox)을 실제로 나란히 두고 성능만 놓고 비교해보면 어떨까 싶어서 정리해봤다. 결론부터 말하면 이론적으로는 분명한 순위가 있지만, 실무에서 체감될 정도인지는 트래픽 규모에 달렸다.</p>
+<h2>뭐에 비용이 드는지부터 보기</h2>
+<pre><code>catch + noRollbackFor   — 예외 생성/처리 비용 (충돌이 났을 때만)
+INSERT IGNORE            — 없음 (네이티브 쿼리 하나, 예외 자체가 없음)
+REQUIRES_NEW + catch     — 매 호출마다 새 DB 커넥션 획득 + 예외 생성 비용(충돌 시)
+Inbox                     — 매번 추가 INSERT 쿼리 1회(선점용) + 본 로직
+</code></pre>
+<h2>순위로 매기면 (빠른 순)</h2>
+<pre><code>INSERT IGNORE  &gt;  catch+noRollbackFor  ≈  catch(같은 트랜잭션)  &gt;  REQUIRES_NEW  &gt;  Inbox
+</code></pre>
+<p><strong>INSERT IGNORE가 제일 빠른 이유</strong>는 예외 자체가 없기 때문이다. JVM에서 예외를 만드는 건 스택 트레이스를 채우는 비용이 있는데, <code>INSERT IGNORE</code>는 그게 아예 발생을 안 한다. 그냥 SQL 하나만 나간다.</p>
+<p><strong>catch 계열(같은 트랜잭션에서 catch, noRollbackFor)이 비슷한 이유</strong>는, 둘 다 &quot;같은 트랜잭션 안에서 예외를 잡는다&quot;는 점이 똑같아서다. 차이는 트랜잭션이 오염되느냐 안 되느냐일 뿐, 정상 경로의 처리 비용 자체는 동일하다. 충돌이 났을 때만 예외 생성 비용이 든다.</p>
+<p><strong>REQUIRES_NEW가 느린 이유</strong>는, 매번 새 트랜잭션을 여는 게 결국 커넥션 풀에서 커넥션을 하나 더 가져오는 오버헤드이기 때문이다. 트랜잭션을 열고 닫는 것 자체가 공짜가 아니라서, 동시 요청이 많을수록 이 비용이 쌓인다.</p>
+<p><strong>Inbox가 제일 느린 이유</strong>는, 성공하는 모든 경우마다 쿼리가 두 번(선점용 + 실제 저장) 나가기 때문이다. 중복이 아닌 정상적인 요청도 항상 이 두 단계를 거쳐야 해서, 구조적으로 나머지보다 느릴 수밖에 없다.</p>
+<h2>근데 이게 실제로 체감이 될까?</h2>
+<p>솔직히 말하면, 보통의 트래픽 규모에서는 이 차이가 거의 무의미하다고 봐도 될 것 같다. 이 차이가 진짜 의미 있어지는 건 이런 상황일 때인 것 같다.</p>
+<ul>
+<li>초당 수천 건 이상의 이벤트가 몰리는, 선착순 쿠폰 발급 같은 극단적인 트래픽 상황</li>
+<li>DB 커넥션 풀이 이미 빠듯하게 운영되고 있어서, REQUIRES_NEW가 커넥션을 하나 더 쓰는 게 병목이 되는 환경</li>
+<li>처리 비용 자체보다 커넥션 풀이 고갈되느냐가 더 중요한 상황</li>
+</ul>
+<p>일반적인 회원가입이나 알림 처리처럼 터지듯이 몰리지 않는 트래픽이라면, 이 정도 성능 차이보다 코드가 얼마나 안전하고 유지보수하기 쉬운지가 훨씬 중요한 기준이 되는 것 같다. 성능만 보면 INSERT IGNORE가 제일 낫지만, 그 대신 JPA 라이프사이클을 포기해야 하는 트레이드오프가 있으니, 결국 지금 다루는 엔티티가 얼마나 단순한가랑 얼마나 트래픽이 몰리는가를 같이 놓고 판단해야 하는 것 같다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>같은 메시지가 두 번 오는 건 특정 기술 문제가 아니라, 처리 완료를 알리는 절차가 실패하면 재전송되는 구조 자체의 문제다.</li>
+<li>그래서 중복을 막는 게 아니라 중복이 와도 결과가 같게 만드는 것이 목표다.</li>
+<li>먼저 볼 곳은 이미 있는 데이터 모델.
+<ul>
+<li>자연키 제약, catch로 넘기기(+ 필요하면 noRollbackFor), 멱등한 연산, 버전 번호(<code>@Version</code>)</li>
+</ul>
+</li>
+<li>이게 안 통할 때(외부 부수효과 등)만 Inbox를 fallback으로 얹는다.</li>
+<li>Inbox를 쓸 땐 기록과 처리가 반드시 같은 트랜잭션이어야 한다.</li>
+<li>성능은 대체로 <code>INSERT IGNORE &gt; catch류 &gt; REQUIRES_NEW &gt; Inbox</code> 순이지만, 웬만한 트래픽에서는 안전성/유지보수성이 더 중요한 기준인 것 같다.</li>
+</ul>
+<pre><code class="language-bash">중복 메시지 도착
+  -&gt; 자연키/멱등연산/버전번호로 해결 가능? -&gt; 예 -&gt; 그걸로 해결 (우선)
+                                     -&gt; 아니오 -&gt; Inbox로 막기 (fallback)
+</code></pre>
+<p>멱등성을 처음부터 뭔가를 추가해야 하는 문제로 보면 Inbox로 손이 먼저 가는 것 같다. 근데 실제로는 이미 있는 데이터 모델을 조금만 손보면 되는 경우가 훨씬 많았다. Inbox를 최후의 수단으로 남겨두면, 그만큼 불필요한 인프라를 덜 짊어지게 되는 것 같다.</p></article></div></div>
+  </body>
+</html>

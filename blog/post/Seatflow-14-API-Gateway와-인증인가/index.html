@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 14. API Gateway와 인증/인가 | Record, Then Build</title>
+    <meta name="description" content="Intro 지금까지 서비스들은 X-User-Id 헤더를 그냥 믿었다. 클라이언트가 이 헤더에 아무 값이나 넣어 보내도 서비스는 그게 진짜 로그인한 사용자라고 가정했다. 4-1편에서 JWT에 role을 담아 발급하기 시작했지만, 그 r" />
+    <meta property="og:title" content="[Seatflow] 14. API Gateway와 인증/인가 | Record, Then Build" />
+    <meta property="og:description" content="Intro 지금까지 서비스들은 X-User-Id 헤더를 그냥 믿었다. 클라이언트가 이 헤더에 아무 값이나 넣어 보내도 서비스는 그게 진짜 로그인한 사용자라고 가정했다. 4-1편에서 JWT에 role을 담아 발급하기 시작했지만, 그 r" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-14-API-Gateway%EC%99%80-%EC%9D%B8%EC%A6%9D%EC%9D%B8%EA%B0%80/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-14-API-Gateway%EC%99%80-%EC%9D%B8%EC%A6%9D%EC%9D%B8%EA%B0%80/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 14. API Gateway와 인증/인가</h1><p>Lab/SeatFlow · 2026-07-18</p><h1>Intro</h1>
+<p>지금까지 서비스들은 X-User-Id 헤더를 그냥 믿었다. 클라이언트가 이 헤더에 아무 값이나 넣어 보내도 서비스는 그게 진짜 로그인한 사용자라고 가정했다. 4-1편에서 JWT에 role을 담아 발급하기 시작했지만, 그 role을 실제로 검증하는 곳이 없었다. 발급만 하고 아무도 확인 안 하는 신분증을 만든 셈이었다.</p>
+<p>이번 편에서 두 가지를 한다.
+첫째, JWT를 실제로 검증해서 X-User-Id를 신뢰할 수 있는 값으로 만든다.
+둘째, 그 검증을 어디서 할지 정한다.</p>
+<p>지금까지 라우팅만 하던 nginx Ingress로는 안 되는 일이라, API Gateway가 필요해진다.</p>
+<hr/>
+<h2>왜 지금까지는 괜찮았을까?</h2>
+<p>모놀리식이었다면 인증/인가 로직이 한 곳(애플리케이션 하나)에만 있으면 됐다. MSA로 쪼개면서 이 로직이 여러 서비스에 나눠 필요해졌는데, 지금까지는 각 서비스가 헤더를 그냥 믿는 걸로 미뤄왔다. 이제 그 미뤄둔 걸 처리할 차례다.</p>
+<hr/>
+<h1>Gateway 선택</h1>
+<p>nginx Ingress는 라우팅과 TLS 종료가 본업이다. 요청 안에 뭐가 들었는지(인증 여부, 권한)는 원래 관심사가 아니다. JWT 검증을 넣으려면 Ingress를 억지로 확장(Lua 스크립트 등)하거나, 처음부터 그 용도로 설계된 API Gateway를 쓰는 두 갈래가 있었다.</p>
+<p>Kong, Traefik, APISIX, Spring Cloud Gateway를 놓고 비교했을 때 Kong이 실무 채택률이 가장 높았고, K8s 생태계 표준인 Gateway API(Ingress의 후속) 위에서 동작하는 게 최근 방향이라 Kong으로 갔다.</p>
+<h2>Gateway가 하는 방식 vs 서비스가 하는 방식</h2>
+<p>Gateway 도입을 정했다고 검증 위치까지 정해지는 건 아니다. 두 가지 패턴이 있다.</p>
+<p><strong>패턴1: Gateway가 검증하고 헤더로 전달</strong></p>
+<pre><code>Kong: JWT 검증 → X-User-Id, X-User-Role 헤더로 변환 → 서비스
+서비스: 헤더만 신뢰
+</code></pre>
+<p>MSA에서 훨씬 흔한 방식이다. 인증 로직이 한 곳에만 있어 관리가 쉽다. 대신 Gateway가 뚫리면 그 뒤 전부가 위험해진다는 전제를 깔고 간다.</p>
+<p><strong>패턴2: 서비스가 각자 검증</strong></p>
+<pre><code>Kong: 라우팅만
+서비스: 각자 JWT 검증 (Spring Security)
+</code></pre>
+<p>Gateway를 신뢰 경계로 삼지 않는다. Gateway가 뚫려도 서비스가 다시 검증하니 이중 방어가 된다. 대신 검증 로직이 여러 서비스에 필요하다.</p>
+<p>패턴 2로 갔다. Gateway 하나에 인증을 전부 의존하고 싶지 않았다. 검증 로직 자체는 공통 모듈로 묶으면 여러 곳에 필요하다는 단점이 크게 줄어든다.</p>
+<h2>common-jwt</h2>
+<p>JWT 관련 코드를 공통 모듈로 만들면서, 발급 능력과 검증 능력을 명확히 나눴다.</p>
+<pre><code>common-jwt (공통, 모든 서비스가 의존)
+  - JwtProperties   (publicKey만)
+  - JwtValidator    (검증 전용)
+  - JwtAuthenticationFilter
+  - CommonSecurityConfig (@AutoConfiguration)
+
+auth-service (전용)
+  - JwtProperties   (privateKey, prefix=&quot;auth.jwt&quot;)
+  - JwtProvider     (발급 + common의 JwtValidator에 검증 위임)
+</code></pre>
+<p>private key는 auth만 갖는다. 검증에 필요한 public key와 검증 로직(JwtValidator)은 모든 서비스가 공유한다. auth 자신도 refresh나 validate 엔드포인트에서 검증이 필요하므로, common-jwt를 그대로 가져다 쓴다. 발급자니까 검증도 안 쓰는게 아니라, 발급은 auth만, 검증은 auth를 포함한 모두가 하는 구도다.</p>
+<p>common-web에서 JWT 관련 코드를 분리해 별도 모듈로 만든 이유는 관심사 때문이다. common-web은 ApiResponse, 예외 처리 같은 범용 웹 공통이고, JWT/Security는 별개 관심사다. 섞어두면 웹 공통만 필요한 곳도 Security 의존을 강제로 갖게 된다.</p>
+<p>common-outbox-jpa처럼 @AutoConfiguration + META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports로 등록해서, 서비스가 컴포넌트 스캔 범위를 어떻게 잡았는지와 무관하게 빈이 자동으로 뜨게 했다.</p>
+<h2>X-User-Id에서 Authentication</h2>
+<pre><code class="language-java">// 기존
+public ResponseEntity&lt;...&gt; holdSeats(
+        @RequestHeader(&quot;X-User-Id&quot;) String userId, ...) { ... }
+
+// 변경
+public ResponseEntity&lt;...&gt; holdSeats(Authentication authentication, ...) {
+    String userId = authentication.getName();
+    ...
+}
+</code></pre>
+<p>이 전환 과정에서 본인 확인이 빠져 있던 곳들이 눈에 띄었다. getUserReservations(userId)처럼 path의 userId를 그대로 믿고 조회하던 API들이 있었다. 로그인한 사용자가 다른 사람의 userId를 넣으면 그 사람 예매·결제·프로필을 볼 수 있는 구조였다. authentication.getName()과 path의 값이 일치하는지 검사를 추가했다.</p>
+<pre><code class="language-java">if (!userId.equals(authentication.getName())) {
+    throw new BusinessException(RESERVATION_NOT_OWNED...);
+}
+</code></pre>
+<p>또 하나, 예매 취소 엔드포인트가 두 개 있었다. Saga 기반의 정식 취소(POST /cancel)와, Saga를 만들기 전 임시로 있던 DELETE /api/reservations/{id}. 후자는 인증도 없고 좌석 반환·환불도 없이 DB 상태만 바꾸는, Saga를 완전히 우회하는 죽은 경로였다. 이번에 발견해서 삭제했다.</p>
+<p>관리자 전용 API(공연 생성)는 @PreAuthorize(&quot;hasRole(&#x27;ADMIN&#x27;)&quot;)로 막았다.</p>
+<pre><code>@PostMapping
+@PreAuthorize(&quot;hasRole(&#x27;ADMIN&#x27;)&quot;)
+public ResponseEntity&lt;...&gt; createShow(...) { ... }
+</code></pre>
+<p>여기서 주의할 점 하나가 있는데, @PreAuthorize 거부는 AuthorizationDeniedException을 던지는데, 이걸 처리하는 핸들러가 없으면 403이 아니라 500으로 떨어진다. GlobalExceptionHandler에 핸들러를 추가해야 의도한 응답이 나온다.</p>
+<pre><code class="language-java">@ExceptionHandler(AuthorizationDeniedException.class)
+public ResponseEntity&lt;...&gt; handleAuthorizationDenied(AuthorizationDeniedException e) {
+    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+            .body(ApiResponse.fail(&quot;접근 권한이 없습니다.&quot;));
+}
+</code></pre>
+<p>또 하나, /actuator/health/** 를 인증 필요 대상에 넣으면 K8s의 liveness/readiness probe가 401을 받아 팟이 재시작을 반복한다. 헬스체크 경로는 반드시 공개해야 한다.</p>
+<h2>Kong 커스텀 플러그인</h2>
+<p>패턴2(서비스 검증)로 확정했지만, Kong에도 검증을 얹었다. Gateway가 명백히 잘못된 요청(토큰 없음, 만료)을 먼저 걸러주면 서비스까지 갈 필요가 없어 부하가 줄고, Gateway가 뚫리더라도 서비스가 다시 검증하니 이중 방어가 된다.</p>
+<p>Kong 표준 jwt 플러그인은 서명 검증만 하고 클레임을 우리가 원하는 헤더로 바꿔주지 않는다. pre-function(인라인 Lua)으로 우회하려 했으나, Kong Enterprise의 Lua 샌드박스가 다른 플러그인 모듈 require를 막아 동작하지 않았다.</p>
+<p>정석은 정식 커스텀 플러그인을 만들어 Kong 이미지에 설치하는 것이었다.</p>
+<p>이전에 ebezium 플러그인을 Kafka Connect 이미지에 얹었던 것과 같은 패턴이다.</p>
+<pre><code class="language-lua">-- handler.lua
+function SeatflowJwtAuthHandler:access(conf)
+    local token = auth_header:sub(8)
+    local ok, jwt = pcall(function() return jwt_decoder:new(token) end)
+    ...
+    local verified = jwt:verify_signature(conf.public_key)
+    ...
+    kong.service.request.set_header(&quot;X-User-Id&quot;, claims.sub)
+    kong.service.request.set_header(&quot;X-User-Role&quot;, claims.role)
+end
+</code></pre>
+<p>이 두 줄을 맞추기까지 세 번 틀렸다. Kong의 jwt_parser 모듈은 .lua가 아니라 .ljbc(컴파일된 바이트코드)로 배포돼 있어서 이미지 안에서 직접 열어볼 수 없었다. jwt_decoder.new(token), jwt_decoder.decode(token) 둘 다 시도했지만 실패했다.</p>
+<p>Lua의 콜론 메서드 호출(:)을 점(.)으로 잘못 부른 것이었다. verify_signature도 테이블로 감싸서 넘겼다가({public_key = ...}) 실패했다. 결국 Kong 공식 GitHub 소스(jwt_parser.lua)를 찾아 정확한 시그니처(jwt:new(token), jwt:verify_signature(key), key는 문자열 그대로)를 확인하고서야 풀렸다. 컴파일된 바이너리 안에서 추측으로 API를 맞추려던 게 문제였고, 공식 문서를 먼저 확인했어야 했다.</p>
+<hr/>
+<h1>테스트</h1>
+<pre><code class="language-bash">TOKEN=$(curl -s -X POST http://&lt;kong&gt;/api/auth/login ... | jq -r &#x27;.data.accessToken&#x27;)
+
+# 인증 없이 -&gt; Kong이 직접 401 (백엔드 도달 안 함)
+curl -i http://&lt;kong&gt;/api/reservations/user/u1
+</code></pre>
+<pre><code class="language-bash">HTTP/1.1 401 Unauthorized
+X-Kong-Response-Latency: 1
+{&quot;message&quot;:&quot;Authorization header missing or malformed&quot;}
+</code></pre>
+<p>X-Kong-Upstream-Latency가 없다. 요청이 서비스까지 가지 않고 Kong 단계에서 끝났다는 뜻이다.</p>
+<pre><code class="language-bash"># 토큰 있음 -&gt; Kong 검증 통과 + 서비스 검증 통과
+curl -i http://&lt;kong&gt;/api/reservations/user/f5f5... -H &quot;Authorization: Bearer $TOKEN&quot;
+</code></pre>
+<pre><code class="language-bash">HTTP/1.1 200
+{&quot;success&quot;:true,&quot;data&quot;:[],&quot;message&quot;:null}
+</code></pre>
+<pre><code class="language-bash"># 다른 사람 조회 시도 -&gt; 서비스의 본인확인이 막음
+curl -i http://&lt;kong&gt;/api/reservations/user/other-id -H &quot;Authorization: Bearer $TOKEN&quot;
+</code></pre>
+<pre><code class="language-bash">HTTP/1.1 403
+{&quot;success&quot;:false,&quot;message&quot;:&quot;본인 예매가 아닙니다.&quot;}
+</code></pre>
+<pre><code class="language-bash"># 관리자 아닌 계정으로 공연 생성 -&gt; @PreAuthorize가 막음
+curl -i -X POST http://&lt;kong&gt;/api/shows -H &quot;Authorization: Bearer $TOKEN&quot; -d &#x27;...&#x27;
+</code></pre>
+<pre><code class="language-bash">HTTP/1.1 403
+{&quot;success&quot;:false,&quot;message&quot;:&quot;접근 권한이 없습니다.&quot;}
+</code></pre>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>Ingress는 라우팅이 본업이라 인증/인가를 넣기엔 맞지 않았다. Kong으로 전환하되, 검증은 Gateway 한 곳에만 의존하지 않고 서비스도 각자 검증하는 패턴을 택했다.
+<ul>
+<li>관리 편의보다 방어 층을 하나 더 두는 쪽을 골랐다.</li>
+</ul>
+</li>
+<li>JWT의 발급(private key)과 검증(public key)을 공통 모듈 안에서도 명확히 분리했다.
+<ul>
+<li>검증 능력은 모든 서비스가 공유해도 되지만, 발급 능력은 auth만 가져야 한다.</li>
+</ul>
+</li>
+<li>인증만으로 안전해지지 않는다.
+<ul>
+<li>path의 값과 인증 주체가 일치하는지 확인하는 본인 확인 로직이 따로 필요했고, 이번 전환 과정에서 그게 빠져 있던 API들과 Saga를 우회하던 죽은 엔드포인트를 같이 발견했다.</li>
+</ul>
+</li>
+<li>@PreAuthorize 거부, actuator 헬스체크는 각각 예외 처리와 공개 경로 설정을 놓치면 500이나 파드 재시작 반복으로 이어진다.</li>
+<li>Kong 커스텀 플러그인은 컴파일된 바이너리 안에서 API를 추측하지 말고 공식 소스를 먼저 확인해야 했다.
+<ul>
+<li>점(.) 호출과 콜론(:) 호출의 차이, 인자를 테이블로 감싸는지 그대로 넘기는지 등등</li>
+<li>라이브러리 사용법은 추측이 아니라 확인의 대상이다.</li>
+</ul>
+</li>
+</ul>
+<hr/>
+<h1>NEXT</h1>
+<p>인증/인가 기반이 갖춰졌으니, 다음은 쿠폰과 관리자 영역이다. 공연 생성은 이미 이번 편에서 관리자 전용으로 막아뒀고, 여기에 쿠폰 발급/좌석 배치 지정 같은 관리자 기능을 마저 채운다.</p></article></div></div>
+  </body>
+</html>

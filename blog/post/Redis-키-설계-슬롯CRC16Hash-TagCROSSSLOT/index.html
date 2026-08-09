@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>Redis 키 설계 (슬롯/CRC16/Hash Tag/CROSSSLOT) | Record, Then Build</title>
+    <meta name="description" content="Intro Lua 스크립트나 트랜잭션으로 여러 키를 한 번에 다루는 코드를 로컬(단일 Redis)에서는 잘 돌리다가, 나중에 진짜 운영 환경에 올렸을 때 갑자기 CROSSSLOT 에러를 만난 적이 있었다. 로컬에서 한 번도 안 봤던 " />
+    <meta property="og:title" content="Redis 키 설계 (슬롯/CRC16/Hash Tag/CROSSSLOT) | Record, Then Build" />
+    <meta property="og:description" content="Intro Lua 스크립트나 트랜잭션으로 여러 키를 한 번에 다루는 코드를 로컬(단일 Redis)에서는 잘 돌리다가, 나중에 진짜 운영 환경에 올렸을 때 갑자기 CROSSSLOT 에러를 만난 적이 있었다. 로컬에서 한 번도 안 봤던 " />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Redis-%ED%82%A4-%EC%84%A4%EA%B3%84-%EC%8A%AC%EB%A1%AFCRC16Hash-TagCROSSSLOT/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/redis.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Redis-%ED%82%A4-%EC%84%A4%EA%B3%84-%EC%8A%AC%EB%A1%AFCRC16Hash-TagCROSSSLOT/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>Redis 키 설계 (슬롯/CRC16/Hash Tag/CROSSSLOT)</h1><p>Database/NoSQL · 2026-07-08</p><h1>Intro</h1>
+<p>Lua 스크립트나 트랜잭션으로 여러 키를 한 번에 다루는 코드를 로컬(단일 Redis)에서는 잘 돌리다가, 나중에 진짜 운영 환경에 올렸을 때 갑자기 <code>CROSSSLOT</code> 에러를 만난 적이 있었다. 로컬에서 한 번도 안 봤던 에러라 처음엔 뭔가 설정이 잘못된 줄 알았는데, 알고 보니 이건 Redis를 어떤 구조로 띄웠는지에 따라 원래 생기는 문제였다.</p>
+<p>그래서 Redis를 운영하는 방식(Standalone, Sentinel, Cluster)이 뭐가 다른지부터 보고, Cluster에서만 생기는 이 슬롯/키 설계 문제를 알아보려고 한다.</p>
+<hr/>
+<h1>Redis를 띄우는 세 가지 방식</h1>
+<h2>Standalone</h2>
+<p>서버 한 대에 Redis 하나. 제일 단순하다. 근데 그 한 대가 죽으면 그냥 다 죽는다. 개발 환경이나 정말 작은 서비스가 아니면 운영에서 이거 하나만 믿고 가긴 어려운 것 같다.</p>
+<h2>Sentinel</h2>
+<p>Redis 인스턴스를 여러 대(마스터 1대 + 레플리카 여러 대) 두고, <code>Sentinel</code>이라는 별도 프로세스가 마스터가 살아있는지 계속 감시한다. 마스터가 죽으면 Sentinel들이 투표해서 레플리카 중 하나를 새 마스터로 승격시킨다(failover). 근데 여기서 중요한 건, 데이터 자체는 여전히 한 대(마스터)에만 다 들어있는 거다. 레플리카는 그 마스터를 복제만 하고 있을 뿐이지, 데이터를 나눠 갖고 있는 게 아니다. 그러니까 Sentinel은 죽었을 때 대신할 애를 자동으로 찾아주는 것이지, 데이터를 여러 대에 나눠서 용량을 늘려주는 것은 아니다.</p>
+<h2>Cluster</h2>
+<p>Sentinel과 다르게 Cluster는 데이터 자체를 여러 노드에 쪼개서 나눠 담는다.그래서 마스터 장애 대응뿐 아니라, 데이터 용량이나 처리량 자체를 여러 노드로 분산시킬 수 있다. 근데 데이터를 나눠 담다 보니 이 키는 어느 노드에 저장할지를 정하는 규칙이 필요해졌고, 이 규칙 때문에 여러 키를 동시에 다루는 명령에 제약이 생긴다. 이 글에서 다루는 문제는 전부 여기서 나온다.</p>
+<hr/>
+<h1>Slot</h1>
+<p>Cluster는 키 하나하나를 노드에 직접 배정하는 게 아니라, 그 중간에 슬롯(hash slot)이라는 단위를 둔다. Redis Cluster는 전체를 16384개의 슬롯으로 나눠두고, 각 노드가 그 슬롯 중 일부 구간을 맡는다.</p>
+<pre><code class="language-bash">슬롯 0 ~ 5460    -&gt; 노드 A
+슬롯 5461 ~ 10922 -&gt; 노드 B
+슬롯 10923 ~ 16383 -&gt; 노드 C
+</code></pre>
+<p>키가 들어오면 이 키는 몇 번 슬롯에 속하는지를 계산해서, 그 슬롯을 담당하는 노드로 보낸다. 이 계산에 쓰는 게 <code>CRC16</code>이다.</p>
+<pre><code class="language-bash">슬롯 번호 = CRC16(키) mod 16384
+</code></pre>
+<p><code>CRC16</code>은 키 문자열을 넣으면 정해진 규칙으로 숫자 하나를 뽑아내는 해시 함수다. 같은 키를 넣으면 항상 같은 숫자가 나오니까, 어떤 키가 어느 슬롯에 속하는지는 항상 똑같이 계산된다. 그래서 클라이언트도 미리 이 슬롯 번호를 계산해서 이 요청은 어느 노드로 가야 하는지를 알 수 있다.</p>
+<hr/>
+<h1>CROSSSLOT</h1>
+<p>슬롯이 노드별로 나뉘어 있다 보니, 한 번의 명령에 여러 키가 들어가는 경우(<code>MGET</code>, <code>MULTI</code>/<code>EXEC</code>, Lua 스크립트에서 여러 키 접근 등)에 문제가 생긴다. 그 키들이 전부 같은 슬롯(=같은 노드)에 있으면 괜찮은데, 서로 다른 슬롯에 흩어져 있으면 Redis는 그 명령 자체를 거부한다.</p>
+<pre><code class="language-bash">MGET key1 key2
+  key1 -&gt; 슬롯 3200 (노드 A)
+  key2 -&gt; 슬롯 9500 (노드 B)
+  -&gt; (error) CROSSSLOT Keys in request don&#x27;t hash to the same slot
+</code></pre>
+<p>이게 처음 봤을 땐 당황스러웠는데, 생각해보면 당연한 제약이었다. 한 번의 명령은 원자적으로 처리돼야 하는데, 그 명령이 다루는 키들이 서로 다른 노드에 있다면 그 노드들끼리 알아서 원자성을 맞춰줄 방법이 없다. 그래서 아예 같은 슬롯에 있는 키끼리만 한 명령에 묶을 수 있게 제한해버린 것 같다.</p>
+<hr/>
+<h1>해결 방법</h1>
+<h2>Hash Tag로 같은 슬롯에 강제로 묶기</h2>
+<p>같이 다뤄야 하는 키들을 의도적으로 같은 슬롯에 들어가게 강제하는 방법이 있다. 키 이름 안에 <code>{}</code>로 감싼 부분(hash tag)을 넣으면, Redis는 슬롯을 계산할 때 그 중괄호 안의 내용만 갖고 계산한다.</p>
+<pre><code class="language-bash">order:{1001}:status
+order:{1001}:items
+</code></pre>
+<p>이 두 키는 실제로는 다른 문자열이지만, <code>{1001}</code> 부분만 슬롯 계산에 쓰이기 때문에 둘 다 같은 슬롯으로 들어간다. 그래서 이 둘을 묶어서 <code>MGET</code>이나 Lua 스크립트, <code>MULTI</code>/<code>EXEC</code>로 같이 다뤄도 <code>CROSSSLOT</code> 에러가 안 난다.</p>
+<pre><code class="language-java">@Service
+public class OrderCacheService {
+
+    private final StringRedisTemplate redisTemplate;
+
+    public OrderCacheService(StringRedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
+
+    public List&lt;String&gt; getStatusAndItems(String orderId) {
+        String statusKey = &quot;order:{%s}:status&quot;.formatted(orderId);
+        String itemsKey = &quot;order:{%s}:items&quot;.formatted(orderId);
+
+        // 두 키가 hash tag 덕분에 같은 슬롯에 있으므로 MGET 가능
+        return redisTemplate.opsForValue().multiGet(List.of(statusKey, itemsKey));
+    }
+}
+</code></pre>
+<p>Lua 스크립트에서 여러 키를 다룰 때도 마찬가지다. 스크립트에 넘기는 <code>KEYS</code> 목록에 있는 키들이 hash tag로 같은 슬롯에 묶여 있어야, Cluster 환경에서도 그 스크립트가 정상적으로 실행된다.</p>
+<p>여기서 조심해야 할 게 하나 있다. Hash tag로 키들을 묶는다는 건, 결국 그 태그를 공유하는 모든 키를 한 노드에 몰아넣는다는 말이다. 관련된 키 몇 개를 묶는 정도면 괜찮은데, 너무 많은 키에 같은 태그를 걸어버리면 그 태그에 해당하는 슬롯(결국 노드 하나)에 데이터와 트래픽이 쏠릴 수 있다. Cluster를 쓰는 이유가 애초에 분산인데, 태그를 남용하면 그 이점을 스스로 깎아먹는 셈이다. 꼭 같이 다뤄야 하는 키들만 최소한으로 묶는 게 맞는 것 같다.</p>
+<hr/>
+<h1>그래서 언제 이걸 신경 써야 할까?</h1>
+<ul>
+<li>Standalone이나 Sentinel만 쓰고 있다면 사실 이 글의 슬롯 얘기는 해당이 없다. 데이터가 한 곳에 다 있으니 여러 키를 묶는 명령도 문제없이 된다.</li>
+<li>Cluster를 쓰는데, 명령이 항상 키 하나만 다룬다면 이것도 신경 쓸 일이 없다.</li>
+<li>Cluster를 쓰면서 <code>MGET</code>, <code>MULTI</code>/<code>EXEC</code>, 여러 키를 참조하는 Lua 스크립트처럼 한 명령이 여러 키를 동시에 다뤄야 하는 상황이라면, 그 키들을 처음 설계할 때부터 hash tag로 묶을지 고려해야 한다.</li>
+</ul>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li><strong>Standalone</strong>은 그냥 하나, <strong>Sentinel</strong>은 장애 시 대신할 마스터를 자동으로 찾아주는 것(데이터는 여전히 한 곳), <strong>Cluster</strong>는 데이터 자체를 여러 노드에 나눠 담는 것</li>
+<li>Cluster는 전체를 16384개의 슬롯으로 나누고, 키는 <code>CRC16(키) mod 16384</code>로 계산된 슬롯에 저장된다</li>
+<li>한 명령이 다루는 키들이 서로 다른 슬롯에 있으면 <code>CROSSSLOT</code> 에러로 거부된다 — 여러 노드에 걸친 원자성을 보장할 방법이 없기 때문이다</li>
+<li>같이 다뤄야 하는 키들은 이름에 <code>{}</code>(hash tag)를 넣어 같은 슬롯으로 강제할 수 있다</li>
+<li>다만 hash tag를 너무 많은 키에 걸면 특정 슬롯(노드)에 트래픽이 쏠려서, Cluster를 쓰는 원래 목적인 분산을 스스로 깎아먹을 수 있다</li>
+</ul>
+<p>로컬 Standalone에서 잘 돌던 코드가 운영 Cluster에서 갑자기 안 되는 이유는 결국 데이터가 여러 노드에 흩어져 있다는 사실 하나 때문이었다. 여러 키를 한 명령으로 묶어야 하는 코드를 짤 땐, 그 키들이 나중에 Cluster에서도 같은 슬롯에 있을 수 있게 처음부터 이름을 설계해두는 게 맞는 것 같다.</p></article></div></div>
+  </body>
+</html>

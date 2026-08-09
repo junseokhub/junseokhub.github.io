@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 12. Saga Orchestration + 보상 트랜잭션 | Record, Then Build</title>
+    <meta name="description" content="Intro 11편에서 설계를 정했다. Orchestration, reservation이 오케스트레이터, 비동기 명령/응답, 전용 상태(CancelSaga)로 진행을 추적한다. 이번 편은 그걸 실제로 돌게 만드는 편이다." />
+    <meta property="og:title" content="[Seatflow] 12. Saga Orchestration + 보상 트랜잭션 | Record, Then Build" />
+    <meta property="og:description" content="Intro 11편에서 설계를 정했다. Orchestration, reservation이 오케스트레이터, 비동기 명령/응답, 전용 상태(CancelSaga)로 진행을 추적한다. 이번 편은 그걸 실제로 돌게 만드는 편이다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-12-Saga-Orchestration-%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-12-Saga-Orchestration-%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 12. Saga Orchestration + 보상 트랜잭션</h1><p>Lab/SeatFlow · 2026-07-11</p><h1>Intro</h1>
+<p>11편에서 설계를 정했다. Orchestration, reservation이 오케스트레이터, 비동기 명령/응답, 전용 상태(CancelSaga)로 진행을 추적한다. 이번 편은 그걸 실제로 돌게 만드는 편이다.</p>
+<p>구현에 들어가기 전에 짚어둘 게 있다. 오케스트레이터가 명령을 발행하려면 reservation과 seat이 이벤트 발행자여야 한다. reservation은 10편에서 이미 발행자가 됐다(reservation.confirmed). seat은 아직이었다. seat.held를 여전히 kafkaTemplate으로 직접 발행하고 있었기 때문이다.</p>
+<p>그래서 이번 편을 시작하면서 seat에도 Outbox를 붙였다. 이왕 붙이는 김에, payment, reservation·seat이 복붙해온 Outbox 엔티티, Repository, 적재 로직을 common-outbox-jpa라는 공통 모듈로 뽑았다. Outbox 구현이 셋이 되고 보니 뭐가 공통이고 뭐가 서비스마다 다른지가 뚜렷해졌다. 9편에서 Outbox를 두 번째 구현(Mongo) 때 추상화한 것과 같은 시점 판단이다.</p>
+<hr/>
+<h1>Outbox를 공통 모듈로 묶기</h1>
+<p>기존엔 서비스마다 Outbox 엔티티, Repository, JpaOutboxStore, 적재 헬퍼(appendOutbox/toJson)를 각자 갖고 있었다. payment 셀 때 만든 걸 reservation이 복붙하고, seat이 또 복붙하는 식이었다.</p>
+<p>9편에서 Outbox를 JPA/Mongo 포트-어댑터로 추상화해뒀는데, 실제로 보니 JPA를 쓰는 서비스가 넷(auth, payment, reservation, seat)이고 Mongo는 show 하나였다. 포트-어댑터 추상화는 DB가 다양할 때 가치가 있는데, 실제 분포는 JPA 쪽으로 완전히 기울어 있었다.</p>
+<p>그래서 JPA 공통 구현을 하나로 묶었다. Mongo(show)는 어차피 혼자라 단독으로 남겼다.</p>
+<pre><code>common-outbox-jpa (신규, JPA 전용)
+  ㄴ Outbox (엔티티, 서비스 4개가 공유)
+  ㄴ OutboxRepository, OutboxStore, OutboxScheduler
+  ㄴ OutboxAppender &lt;- 적재 헬퍼. 이게 핵심이다
+
+show(Mongo) -&gt; 단독 구현 유지
+</code></pre>
+<p>가장 크게 줄어든 건 적재 코드다. 기존엔 서비스마다 이런 코드가 있었다.</p>
+<pre><code class="language-java">private void appendOutbox(String eventType, String messageKey, Object event) {
+    EventEnvelope&lt;?&gt; envelope = EventEnvelope.of(eventType, SOURCE, event);
+    outboxRepository.save(Outbox.builder()
+            .eventId(envelope.eventId())
+            .eventType(eventType)
+            .messageKey(messageKey)
+            .payload(toJson(envelope))
+            .build());
+}
+</code></pre>
+<p>이걸 OutboxAppender 하나로 뽑았다.</p>
+<pre><code class="language-java">@Transactional
+public void append(String eventType, String source, String messageKey, Object event) {
+    EventEnvelope&lt;?&gt; envelope = EventEnvelope.of(eventType, source, event);
+    outboxRepository.save(Outbox.builder()
+            .eventId(envelope.eventId())
+            .eventType(eventType)
+            .messageKey(messageKey)
+            .payload(serialize(envelope))
+            .build());
+}
+</code></pre>
+<p>이제 각 서비스는 이벤트 발행이 필요할 때 모듈을 가져온 뒤 한 줄만 쓴다.</p>
+<pre><code class="language-java">outboxAppender.append(EventTopic.SEAT_HELD, SOURCE, userId, event);
+</code></pre>
+<p>직렬화는 kafkaObjectMapper(common-kafka)를 재사용해서, 이벤트 발행 시 쓰는 직렬화 설정과 어긋나지 않게 했다.</p>
+<hr/>
+<h1>Saga 상태(CancelSaga)</h1>
+<p>11편에서 정한 대로 진행 단계를 전용 엔티티로 둔다.</p>
+<pre><code class="language-java">public enum CancelSagaStatus {
+    STARTED, SEAT_RELEASED, REFUNDED, COMPLETED,   // 정상
+    COMPENSATING, FAILED                            // 보상
+}
+</code></pre>
+<p>reservationId에 unique를 걸어, 같은 예매로 취소를 두 번 시작할 수 없게 했다. 취소 요청이 중복 도착해도(사용자가 버튼을 두 번 누르는 것도 포함) 두 번째는 여기서 막힌다.</p>
+<hr/>
+<h1>명령과 응답 이벤트</h1>
+<p>정방향과 보상이 대칭 구조다.</p>
+<pre><code>[좌석 반환]
+SeatReleaseCommand         reservation -&gt; seat
+SeatReleasedEvent          seat -&gt; reservation
+
+[환불]
+PaymentRefundCommand       reservation -&gt; payment
+PaymentRefundedEvent       payment -&gt; reservation
+PaymentRefundFailedEvent   payment -&gt; reservation (실패, reason 포함)
+
+[보상 - 좌석 재점유]
+SeatReserveCompensationCommand   reservation -&gt; seat
+SeatReservedCompensatedEvent     seat -&gt; reservation
+</code></pre>
+<p>모든 이벤트에 sagaId를 싣는다. reservationId로도 매칭할 수 있지만, sagaId(CancelSaga의 PK)를 쓴 이유가 있다. reservationId는 도메인 키이고, Saga 실행 자체를 가리키는 식별자가 아니다. 나중에 같은 예매로 취소가 재시도되는 경우가 생기면 reservationId만으로는 이번 시도와 이전 시도를 구분할 수 없다. sagaId는 그 실행 하나를 정확히 가리킨다.</p>
+<pre><code class="language-java">public record SeatReleaseCommand(
+        Long sagaId, Long reservationId, String showId, Long seatId
+) {}
+
+public record PaymentRefundFailedEvent(
+        Long sagaId, Long reservationId, String reason
+) {}
+</code></pre>
+<p>실패 응답에 reason을 넣은 것도 의도적이다. 오케스트레이터가 보상을 시작할 때 로그에 왜 실패했는지 남아야 나중에 원인을 추적할 수 있다.</p>
+<hr/>
+<h1>오케스트레이터</h1>
+<p>reservation의 CancelSagaOrchestrator가 심장이다. 메서드 하나가 한 단계씩만 처리하고 끝난다. 다음 단계는 응답이 왔을 때 다른 메서드가 이어받는다.</p>
+<pre><code class="language-java">@Transactional
+public void startCancellation(Long reservationId, String userId) {
+    Reservation reservation = reservationRepository.findById(reservationId)
+            .orElseThrow(...);
+
+    if (!reservation.getUserId().equals(userId)) {
+        throw new BusinessException(RESERVATION_NOT_OWNED);
+    }
+    if (cancelSagaRepository.findByReservationId(reservationId).isPresent()) {
+        throw new BusinessException(CANCELLATION_ALREADY_IN_PROGRESS);
+    }
+
+    LocalDateTime now = LocalDateTime.now();
+    if (!CancellationPolicy.isCancellable(reservation.getShowDate(), now)) {
+        throw new BusinessException(CANCELLATION_DEADLINE_PASSED);
+    }
+    BigDecimal refundAmount = CancellationPolicy.calculateRefund(
+            reservation.getAmount(), reservation.getShowDate(), now);
+
+    reservation.startCancelling();   // CONFIRMED → CANCELLING
+
+    CancelSaga saga = cancelSagaRepository.save(CancelSaga.builder()
+            .reservationId(reservationId).userId(userId)
+            .seatId(reservation.getSeatId()).showId(reservation.getShowId())
+            .refundAmount(refundAmount).build());
+
+    outboxAppender.append(EventTopic.SEAT_RELEASE_COMMAND, SOURCE, String.valueOf(saga.getSeatId()),
+            new SeatReleaseCommand(saga.getId(), reservationId, saga.getShowId(), saga.getSeatId()));
+}
+</code></pre>
+<p>취소 가능 여부, 중복 취소, 본인 확인을 전부 시작 시점에 확인한다. Saga를 시작한 다음에 실패시키는 것보다, 시작 전에 걸러내는 게 훨씬 간단하다. Saga가 진행되다 취소 불가로 실패하면 이미 발행한 명령까지 되돌려야 하니 복잡해진다.</p>
+<p>응답 처리는 이런 식으로 이어진다.</p>
+<pre><code class="language-java">@Transactional
+public void onSeatReleased(Long sagaId, Long reservationId) {
+    CancelSaga saga = cancelSagaRepository.findById(sagaId).orElse(null);
+    if (saga == null) return;
+    if (!saga.isStarted()) {
+        return;   // 중복 응답. 이미 다음 단계로 갔으면 무시.
+    }
+
+    saga.markSeatReleased();
+
+    outboxAppender.append(EventTopic.PAYMENT_REFUND_COMMAND, SOURCE, String.valueOf(reservationId),
+            new PaymentRefundCommand(sagaId, reservationId, saga.getRefundAmount()));
+}
+</code></pre>
+<p>isStarted() 같은 상태 가드가 각 메서드 앞에 있다. Kafka가 at-least-once라 같은 응답이 중복 도착할 수 있어서다. 이미 다음 단계로 넘어간 뒤에 같은 응답이 또 오면, 상태를 보고 조용히 무시한다.</p>
+<p>환불 실패는 보상으로 이어진다.</p>
+<pre><code class="language-java">@Transactional
+public void onPaymentRefundFailed(Long sagaId, Long reservationId, String reason) {
+    CancelSaga saga = cancelSagaRepository.findById(sagaId).orElse(null);
+    if (saga == null || !saga.isSeatReleased()) return;
+
+    log.warn(&quot;Payment refund failed, starting compensation: sagaId={}, reason={}&quot;, sagaId, reason);
+    saga.markCompensating();
+
+    outboxAppender.append(EventTopic.SEAT_RESERVE_COMPENSATION_COMMAND, SOURCE,
+            String.valueOf(saga.getSeatId()),
+            new SeatReserveCompensationCommand(sagaId, reservationId, saga.getShowId(), saga.getSeatId()));
+}
+</code></pre>
+<p>보상 명령도 정방향과 똑같이 명령-응답 구조다. 좌석이 다시 점유되면 그 응답을 받아 마무리한다.</p>
+<pre><code class="language-java">@Transactional
+public void onSeatReservedCompensated(Long sagaId, Long reservationId) {
+    CancelSaga saga = cancelSagaRepository.findById(sagaId).orElse(null);
+    if (saga == null || !saga.isCompensating()) return;
+
+    saga.markFailed();
+
+    Reservation reservation = reservationRepository.findById(reservationId).orElse(null);
+    if (reservation != null) {
+        reservation.revertCancelling();   // CANCELLING → CONFIRMED
+    }
+}
+</code></pre>
+<p>취소는 실패로 끝나지만(CancelSaga FAILED), 예매는 취소되지 않은 원래 상태(CONFIRMED)로 돌아간다. 사용자 입장에서는 취소를 시도했는데 안 됐고, 예매는 그대로 유지된다.</p>
+<hr/>
+<h1>참여자</h1>
+<p>명령을 받는 쪽은 기존 도메인 메서드를 그대로 재사용한다. 10편에서 만든 Seat.release(), Seat.reserve()가 이미 멱등하게 설계돼 있어서(이미 그 상태면 무시), 명령이 중복 도착해도 안전하다.</p>
+<pre><code class="language-java">@Transactional
+public void releaseSeatForCancellation(Long sagaId, Long reservationId, String showId, Long seatId) {
+    Seat seat = seatRepository.findById(seatId).orElse(null);
+    if (seat == null) return;
+
+    seat.release();   // RESERVED → AVAILABLE (이미 AVAILABLE이면 멱등 무시)
+
+    outboxAppender.append(EventTopic.SEAT_RELEASED, SOURCE, String.valueOf(seatId),
+            new SeatReleasedEvent(sagaId, reservationId, seatId));
+}
+</code></pre>
+<p>환불은 결제한 수단으로 라우팅한다. 10편에서 PaymentStrategy에 refund()를 추가해뒀으니(카드 결제는 카드로 환불, 카카오페이는 카카오페이로), 여기서는 그 전략을 그대로 부른다.</p>
+<pre><code class="language-java">@Transactional
+public void executeRefund(Long sagaId, Long reservationId, BigDecimal refundAmount) {
+    Payment payment = paymentRepository.findByReservationIdAndStatus(reservationId, COMPLETED)
+            .orElse(null);
+    if (payment == null) {
+        outboxAppender.append(EventTopic.PAYMENT_REFUND_FAILED, SOURCE, String.valueOf(reservationId),
+                new PaymentRefundFailedEvent(sagaId, reservationId, &quot;결제 내역을 찾을 수 없음&quot;));
+        return;
+    }
+
+    boolean success = strategyRegistry.get(payment.getPaymentMethod())
+            .refund(payment.getPaymentNumber(), refundAmount);
+
+    if (success) {
+        payment.refund(refundAmount);
+        outboxAppender.append(EventTopic.PAYMENT_REFUNDED, SOURCE, String.valueOf(reservationId),
+                new PaymentRefundedEvent(sagaId, reservationId, refundAmount));
+    } else {
+        outboxAppender.append(EventTopic.PAYMENT_REFUND_FAILED, SOURCE, String.valueOf(reservationId),
+                new PaymentRefundFailedEvent(sagaId, reservationId, &quot;PG 환불 승인 거절&quot;));
+    }
+}
+</code></pre>
+<p>외부 PG 호출(strategyRegistry...refund)의 성공 여부에 따라 응답이 갈린다. 지금은 PG가 mock이라 각 결제수단 전략이 true/false를 정해서 돌려주는데, 그 자체가 테스트에서 실패 시나리오를 만드는 지점이 된다(뒤에서 다룬다).</p>
+<hr/>
+<h2>전체 흐름</h2>
+<pre><code>[취소 요청]
+POST /api/reservations/{id}/cancel
+  -&gt; reservation: 본인확인, 중복확인, 마감확인, 수수료계산
+  -&gt; CONFIRMED -&gt; CANCELLING, CancelSaga STARTED
+  -&gt; seat.release.command 발행
+  (여기서 202 Accepted로 응답 / 완료가 아니라 시작을 의미)
+
+[좌석 반환]
+seat: 명령 수신 -&gt; release() -&gt; seat.released 발행
+
+[환불 명령]
+reservation: seat.released 수신 -&gt; SEAT_RELEASED
+  -&gt; payment.refund.command 발행(환불액 포함)
+
+[환불]
+payment: 명령 수신 -&gt; 결제수단으로 환불 시도
+  성공 -&gt; payment.refunded 발행
+  실패 -&gt; payment.refund.failed 발행(reason 포함)
+
+[정상 마무리]
+reservation: payment.refunded 수신
+  -&gt; REFUNDED -&gt; COMPLETED, CANCELLING -&gt; CANCELLED
+
+[보상]
+reservation: payment.refund.failed 수신
+  -&gt; COMPENSATING
+  -&gt; seat.reserve.compensation.command 발행
+seat: 명령 수신 -&gt; reserve() -&gt; seat.reserved.compensated 발행
+reservation: 수신 -&gt; FAILED, CANCELLING -&gt; CONFIRMED (원상복구)
+</code></pre>
+<hr/>
+<h1>테스트</h1>
+<p>세 가지 시나리오를 확인한다.</p>
+<h2>정상 취소</h2>
+<p>공연일이 충분히 남은 예매를 확정(결제 완료)까지 만든 뒤 취소한다.</p>
+<pre><code class="language-bash">curl -X POST http://&lt;ingress&gt;/api/reservations/5/cancel -H &#x27;X-User-Id: u1&#x27;
+# { &quot;success&quot;: true, &quot;data&quot;: null }
+</code></pre>
+<p>취소 응답의 data가 null인 건 의도한 것이다. 이 요청은 Saga를 시작만 하고 바로 끝난다. 실제 취소 완료는 비동기로 진행되므로, 최종 결과는 다시 조회해야 확인할 수 있다.</p>
+<p>몇 초 뒤 조회하면 상태가 바뀌어 있다.</p>
+<pre><code class="language-bash">curl -s http://&lt;ingress&gt;/api/reservations/5 | jq &#x27;.data.status&#x27;
+# &quot;CANCELLED&quot;
+
+curl -s http://&lt;ingress&gt;/api/seats/&lt;showId&gt; | jq &#x27;.data[] | select(.id==9)&#x27;
+# { &quot;id&quot;: 9, &quot;status&quot;: &quot;AVAILABLE&quot; }
+</code></pre>
+<p>예매는 CANCELLED, 좌석은 AVAILABLE로 돌아왔다.</p>
+<h2>취소 마감이 지난 경우</h2>
+<p>공연일을 오늘로 잡은 예매로 취소를 시도한다.</p>
+<pre><code class="language-java">curl -X POST http://&lt;ingress&gt;/api/reservations/4/cancel -H &#x27;X-User-Id: u2&#x27;
+# { &quot;success&quot;: false, &quot;message&quot;: &quot;취소 가능 기간이 지났습니다.&quot; }
+</code></pre>
+<p>Saga가 시작되기 전에 걸러진다. 예매 상태는 CONFIRMED 그대로 유지된다.</p>
+<h2>환불 실패 -&gt; 보상</h2>
+<p>이 시나리오를 재현하려면 결제수단 전략이 실패를 반환해야 한다. 지금 환불이 전부 mock으로 성공만 하므로, 테스트를 위해 하나의 전략(TOSS)을 의도적으로 항상 실패하도록 뒀다.</p>
+<pre><code class="language-java">@Override
+public boolean refund(String paymentNumber, BigDecimal refundAmount) {
+    log.info(&quot;[Toss] refund: paymentNumber={}, refundAmount={}&quot;, paymentNumber, refundAmount);
+    return false;   // 보상 경로 재현용
+}
+</code></pre>
+<p>TOSS로 결제한 예매를 취소한다.</p>
+<pre><code class="language-bash">curl -X POST http://&lt;ingress&gt;/api/reservations/5/cancel -H &#x27;X-User-Id: u3&#x27;
+</code></pre>
+<p>몇 초 뒤 확인하면, CANCELLED가 아니라 원래 상태로 돌아와 있다.</p>
+<pre><code class="language-bash">curl -s http://&lt;ingress&gt;/api/reservations/5 | jq &#x27;.data.status&#x27;
+# &quot;CONFIRMED&quot;   (CANCELLED가 아니다)
+
+curl -s http://&lt;ingress&gt;/api/seats/&lt;showId&gt; | jq &#x27;.data[] | select(.id==9)&#x27;
+# { &quot;id&quot;: 9, &quot;status&quot;: &quot;RESERVED&quot; }   (AVAILABLE로 갔다가 다시 RESERVED)
+</code></pre>
+<p>환불이 실패했지만 시스템은 취소 시도 이전과 동일한 상태로 정확히 복구됐다. 돈은 안 나갔고, 좌석도 안전하게 그 사용자에게 남아 있다. 이게 보상 트랜잭션이 보장하는 것이다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>Outbox 구현이 셋(payment, reservation, seat)이 되면서 뭐가 공통인지 뚜렷해져 common-outbox-jpa로 묶었다. Mongo(show)는 하나뿐이라 단독으로 남겼다. DB가 다양할 때는 포트-어댑터 추상화가, 특정 DB가 다수일 때는 그 다수를 공통화하는 게 맞다.</li>
+<li>Outbox를 쓰는 모든 서비스는 @EnableScheduling이 있어야 발행이 실제로 나간다. 없으면 적재는 되는데 영원히 PENDING에 남는다.</li>
+<li>명령/응답 이벤트는 sagaId로 매칭한다. reservationId는 도메인 키일 뿐 Saga 실행 자체의 식별자가 아니다.</li>
+<li>오케스트레이터의 각 응답 처리 메서드는 현재 Saga 상태를 확인하는 가드로 시작한다. Kafka가 at-least-once라 중복 응답이 도착할 수 있어서다.</li>
+<li>정방향(좌석 반환 -&gt; 환불)과 보상(좌석 재점유)이 대칭 구조다. 보상도 명령-응답으로 처리하고, 완료되면 예매를 확정 상태로 되돌린다.</li>
+<li>참여자(seat, payment)는 10편에서 만든 멱등한 도메인 메서드를 그대로 재사용한다. 새로 멱등성을 고민할 필요가 없었다.</li>
+<li>정상 취소, 마감 초과, 환불 실패 보상까지 세 경로를 실제로 확인했다.</li>
+</ul>
+<hr/>
+<h1>NEXT</h1>
+<p>취소, 환불까지 다루면서 예매, 결제, 좌석의 정합성이 실패 상황까지 포함해 완결됐다. 다음은 이벤트 멱등성과 DLQ다. 지금까지 각 컨슈머가 개별적으로 멱등성을 처리해왔는데(도메인 상태 가드, unique 제약 등), 재처리 전략과 DLQ까지 포함해 데이터 정합성을 한 번에 다룬다.</p></article></div></div>
+  </body>
+</html>

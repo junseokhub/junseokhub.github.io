@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 06. 주문 API 구현과 재고 처리 방식 설계 | Record, Then Build</title>
+    <meta name="description" content="Intro 5편에서 k6 부하 테스트를 돌렸지만 진짜 병목을 확인하지 못했다. 재고가 100개뿐이라 100건 처리 후 나머지는 전부 Redis에서 즉시 튕겨내는 구조였기 때문이다. DB write 병목, 커넥션 풀 고갈 같은 진짜 문" />
+    <meta property="og:title" content="[Coupon&amp;Order] 06. 주문 API 구현과 재고 처리 방식 설계 | Record, Then Build" />
+    <meta property="og:description" content="Intro 5편에서 k6 부하 테스트를 돌렸지만 진짜 병목을 확인하지 못했다. 재고가 100개뿐이라 100건 처리 후 나머지는 전부 Redis에서 즉시 튕겨내는 구조였기 때문이다. DB write 병목, 커넥션 풀 고갈 같은 진짜 문" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-06-%EC%A3%BC%EB%AC%B8-API-%EA%B5%AC%ED%98%84%EA%B3%BC-%EC%9E%AC%EA%B3%A0-%EC%B2%98%EB%A6%AC-%EB%B0%A9%EC%8B%9D-%EC%84%A4%EA%B3%84/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-06-%EC%A3%BC%EB%AC%B8-API-%EA%B5%AC%ED%98%84%EA%B3%BC-%EC%9E%AC%EA%B3%A0-%EC%B2%98%EB%A6%AC-%EB%B0%A9%EC%8B%9D-%EC%84%A4%EA%B3%84/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 06. 주문 API 구현과 재고 처리 방식 설계</h1><p>Lab/Coupon&amp;Order · 2026-04-27</p><h1>Intro</h1>
+<p>5편에서 k6 부하 테스트를 돌렸지만 진짜 병목을 확인하지 못했다. 재고가 100개뿐이라 100건 처리 후 나머지는 전부 Redis에서 즉시 튕겨내는 구조였기 때문이다. DB write 병목, 커넥션 풀 고갈 같은 진짜 문제를 확인하려면 재고가 충분히 많아야 한다.</p>
+<p>그래서 다음 단계로 주문 API를 구현하기로 했다. 주문은 쿠폰보다 훨씬 복잡한 동시성 문제를 다룬다. 쿠폰은 Redis에서 모든 걸 처리했지만, 주문은 다양한 방식으로 재고를 처리할 수 있다. 그리고 각 방식이 부하 상황에서 어떻게 다르게 동작하는지 직접 비교해보는 것이 이번 시리즈의 핵심이다.</p>
+<hr/>
+<h1>주문 API 설계</h1>
+<h2>시나리오</h2>
+<p>유저가 상품을 주문할 때 쿠폰을 선택적으로 적용할 수 있다. 쿠폰이 있으면 원래 가격에서 할인이 적용된 최종 가격으로 주문이 생성된다.</p>
+<pre><code>유저 -&gt; 주문 요청 (productId, couponIssueId?)
+    -&gt; 재고 확인 + 차감
+    -&gt; 쿠폰 적용 가격 계산
+    -&gt; 주문 저장
+</code></pre>
+<h3>ERD</h3>
+<pre><code>products
+ㄴ id (PK)
+ㄴ name
+ㄴ price
+ㄴ stock
+ㄴ version         # 낙관적 락용
+ㄴ created_by (FK -&gt; users)
+ㄴ created_at
+ㄴ updated_at
+
+orders
+ㄴ id (PK)
+ㄴ user_id (FK -&gt; users)
+ㄴ product_id (FK -&gt; products)
+ㄴ coupon_issue_id (FK -&gt; coupon_issues, nullable)
+ㄴ original_price       # 원래 가격
+ㄴ final_price          # 쿠폰 적용 후 가격
+ㄴ correlation_id       # Kafka 메시지 멱등성 보장용 (UNIQUE, nullable)
+ㄴ status               # PENDING / CONFIRMED / CANCELLED
+ㄴ created_at
+ㄴ updated_at
+</code></pre>
+<p><code>version</code> 컬럼은 낙관적 락 방식에서 사용한다. R2DBC에서 <code>@Version</code> 어노테이션을 붙이면 save 시 자동으로 version을 체크하고 충돌이 나면 <code>OptimisticLockingFailureException</code>을 던진다.</p>
+<hr/>
+<h1>재고 처리 방식 고민</h1>
+<p>주문에서 재고를 차감하는 방법은 여러 가지다. 각 방식마다 동시성 보장 방법, 성능, 복잡도가 다르다.</p>
+<h2>1. Redis Lua 스크립트</h2>
+<p>쿠폰 발급에서 이미 검증된 방식이다. Redis에서 먼저 재고를 차감하고, 성공하면 DB에 주문을 저장한다.</p>
+<pre><code class="language-lua">local stock = tonumber(redis.call(&#x27;GET&#x27;, KEYS[1]))
+if stock == nil or stock &lt;= 0 then
+    return -1
+end
+redis.call(&#x27;DECR&#x27;, KEYS[1])
+return 1
+</code></pre>
+<p>Redis는 싱글 스레드로 동작하고 Lua 스크립트는 원자적으로 실행되기 때문에 race condition이 발생하지 않는다. 응답 속도가 가장 빠를 것으로 예상된다. 단, Redis 재고와 DB 재고 간 동기화 문제가 생길 수 있다.</p>
+<h2>2. DB 낙관적 락 (Optimistic Lock)</h2>
+<p><code>version</code> 컬럼을 활용한다. 조회 시점의 version과 저장 시점의 version이 다르면 충돌로 판단하고 재시도한다.</p>
+<pre><code class="language-java">@Version
+private int version;
+</code></pre>
+<p>R2DBC에서 <code>@Version</code>을 붙이면 save 시 자동으로 처리된다. 충돌이 발생하면 <code>OptimisticLockingFailureException</code>이 터지고, 이를 잡아서 재시도하는 방식이다.</p>
+<pre><code class="language-java">.onErrorResume(OptimisticLockingFailureException.class,
+        e -&gt; decrementStock(productId)); // 재시도
+</code></pre>
+<p>충돌이 적은 환경에서는 락을 걸지 않으니 빠르지만, 동시 요청이 많아지면 재시도가 폭발적으로 늘어날 수 있다.</p>
+<h2>3. DB 비관적 락 (Pessimistic Lock)</h2>
+<p>조회 시점에 락을 걸어서 다른 트랜잭션이 접근하지 못하게 한다. R2DBC는 <code>@Lock</code>을 지원하지 않기 때문에 <code>DatabaseClient</code>로 직접 쿼리를 작성해야 한다.</p>
+<pre><code class="language-java">databaseClient.sql(&quot;SELECT * FROM products WHERE id = :id FOR UPDATE&quot;)
+        .bind(&quot;id&quot;, productId)
+        ...
+</code></pre>
+<p>데이터 정합성은 완벽하게 보장되지만, 락을 걸고 푸는 오버헤드가 있다. 동시 요청이 많아지면 락 대기 시간이 길어져 병목이 생긴다.</p>
+<h2>4. Kafka</h2>
+<p>주문 요청을 Kafka 토픽에 발행하고, Consumer가 순차적으로 처리한다. 순서가 보장되기 때문에 동시성 문제 자체가 발생하지 않는다.</p>
+<pre><code>Producer → Kafka Topic → Consumer → 재고 차감 + 주문 저장
+</code></pre>
+<p>완벽한 순서 보장과 높은 처리량을 제공하지만, 구현 복잡도가 높고 지연이 발생할 수 있다. 이번 시리즈에서 마지막으로 구현할 예정이다.</p>
+<hr/>
+<h1></h1>
+<p>구현 구조 설계</p>
+<p>5가지 방식을 모두 구현하고 yml 설정 하나로 교체할 수 있게 설계했다.</p>
+<h2>OrderService 인터페이스</h2>
+<p>correlationId는 Kafka 모드에서 메시지 멱등성을 보장하기 위한 키다. 직접 처리 모드에서는 컨트롤러에서 null을 넘기고, Kafka Consumer 모드에서는 OrderMessage에 담겨온 값을 그대로 전달한다.</p>
+<pre><code class="language-java">public interface OrderService {
+    Mono&lt;Order&gt; createOrder(Long userId, Long productId, Long couponIssueId, String correlationId);
+}
+</code></pre>
+<h2>yml로 구현체 교체</h2>
+<pre><code class="language-yml">order:
+  service-type: OPTIMISTIC_LOCK  # REDIS_LUA, OPTIMISTIC_LOCK, PESSIMISTIC_LOCK, KAFKA
+</code></pre>
+<h2>OrderServiceConfig</h2>
+<p>앱 시작 시 yml 값을 읽어서 구현체 하나를 <code>OrderService</code> 빈으로 등록한다. 요청마다 Config를 거치는 게 아니라 시작 시 딱 한 번만 실행된다.</p>
+<pre><code class="language-java">@Slf4j
+@Configuration
+@RequiredArgsConstructor
+public class OrderServiceConfig {
+
+    private final OrderProperties orderProperties;
+    private final ProductRepository productRepository;
+    private final ReactiveRedisTemplate&lt;String, String&gt; reactiveRedisTemplate;
+    private final DefaultOrderService defaultOrderService;
+    private final DatabaseClient databaseClient;
+    private final KafkaSender&lt;String, String&gt; kafkaSender;
+    private final OutboxRepository outboxRepository;
+    private final ObjectMapper objectMapper;
+
+    @Bean
+    public RedisLuaOrderService redisLuaOrderService() {
+        return new RedisLuaOrderService(
+                productRepository, reactiveRedisTemplate, defaultOrderService, outboxRepository, objectMapper);
+    }
+
+    @Bean
+    public OptimisticLockOrderService optimisticLockOrderService() {
+        return new OptimisticLockOrderService(productRepository, defaultOrderService);
+    }
+
+    @Bean
+    public PessimisticLockOrderService pessimisticLockOrderService() {
+        return new PessimisticLockOrderService(productRepository, databaseClient, defaultOrderService);
+    }
+
+    @Bean
+    public KafkaAsyncOrderService kafkaAsyncOrderService() {
+        return new KafkaAsyncOrderService(kafkaSender, objectMapper);
+    }
+
+    @Bean
+    public KafkaSyncOrderService kafkaSyncOrderService(
+            @Qualifier(&quot;resultReceiverOptions&quot;) ReceiverOptions&lt;String, String&gt; resultReceiverOptions
+    ) {
+        return new KafkaSyncOrderService(kafkaSender, objectMapper, resultReceiverOptions);
+    }
+
+    @Bean
+    @Primary
+    public OrderService orderService(
+            RedisLuaOrderService redisLuaOrderService,
+            OptimisticLockOrderService optimisticLockOrderService,
+            PessimisticLockOrderService pessimisticLockOrderService,
+            KafkaAsyncOrderService kafkaAsyncOrderService,
+            KafkaSyncOrderService kafkaSyncOrderService
+    ) {
+        OrderService service = switch (orderProperties.serviceType()) {
+            case REDIS_LUA -&gt; redisLuaOrderService;
+            case OPTIMISTIC_LOCK -&gt; optimisticLockOrderService;
+            case PESSIMISTIC_LOCK -&gt; pessimisticLockOrderService;
+            case KAFKA_ASYNC -&gt; kafkaAsyncOrderService;
+            case KAFKA_SYNC -&gt; kafkaSyncOrderService;
+        };
+        log.info(&quot;OrderService 구현체: {}&quot;, service.getClass().getSimpleName());
+        return service;
+    }
+}
+</code></pre>
+<h2>DefaultOrderService (공통 로직)</h2>
+<p>상속 대신 컴포지션을 선택했다. 처음에는 AbstractOrderService로 추상 클래스를 만들었는데, Lombok @RequiredArgsConstructor가 상속 구조에서 부모 클래스 생성자를 자동으로 super() 호출해주지 않아서 에러가 났다.</p>
+<p>결국 공통 로직을 별도 DefaultOrderService로 분리하고, 각 구현체가 이를 주입받아 사용하는 컴포지션 방식으로 변경했다. Spring에서도 상속보다 컴포지션을 권장하는 방향이라 오히려 더 나은 설계가 됐다.</p>
+<p>또한 Kafka 모드에서 메시지 재처리 시 중복 주문이 생기지 않도록 correlationId 기반 멱등성 처리도 함께 적용했다. correlationId가 있으면 먼저 조회하여 기존 주문이 있으면 그대로 반환하고, 없을 때만 새로 저장한다. correlationId가 null인 경우(직접 처리 모드)는 멱등성 체크 없이 바로 저장한다.</p>
+<pre><code class="language-java">@Service
+@RequiredArgsConstructor
+public class DefaultOrderService {
+
+    private final OrderRepository orderRepository;
+    private final CouponIssueRepository couponIssueRepository;
+    private final CouponRepository couponRepository;
+
+    public Mono&lt;Order&gt; saveOrder(Long userId, Product product, Long couponIssueId, String correlationId) {
+        if (correlationId == null) {
+            return saveNewOrder(userId, product, couponIssueId, null);
+        }
+        return orderRepository.findByCorrelationId(correlationId)
+                .switchIfEmpty(Mono.defer(() -&gt; saveNewOrder(userId, product, couponIssueId, correlationId)));
+    }
+
+    private Mono&lt;Order&gt; saveNewOrder(Long userId, Product product, Long couponIssueId, String correlationId) {
+        return resolveFinalPrice(product, couponIssueId)
+                .flatMap(finalPrice -&gt; orderRepository.save(
+                        Order.builder()
+                                .userId(userId)
+                                .productId(product.getId())
+                                .couponIssueId(couponIssueId)
+                                .originalPrice(product.getPrice())
+                                .finalPrice(finalPrice)
+                                .correlationId(correlationId)
+                                .build()
+                ));
+    }
+
+
+    private Mono&lt;Integer&gt; resolveFinalPrice(Product product, Long couponIssueId) {
+        if (couponIssueId == null) {
+            return Mono.just(product.getPrice());
+        }
+
+        return couponIssueRepository.findById(couponIssueId)
+                .switchIfEmpty(Mono.error(
+                        new BusinessException(ErrorCode.COUPON_ISSUE_NOT_FOUND)))
+                .flatMap(couponIssue -&gt; couponRepository.findById(couponIssue.getCouponId())
+                        .map(coupon -&gt; calculatePrice(
+                                product.getPrice(),
+                                coupon.getType(),
+                                coupon.getDiscountValue()
+                        ))
+                );
+    }
+
+    private int calculatePrice(int price, String type, int discountValue) {
+        return switch (type) {
+            case &quot;PERCENT&quot; -&gt; price - (price * discountValue / 100);
+            case &quot;FIXED&quot; -&gt; Math.max(0, price - discountValue);
+            case &quot;FREE&quot; -&gt; 0;
+            default -&gt; price;
+        };
+    }
+}
+</code></pre>
+<h2>각 구현체</h2>
+<p>재고 차감 방식만 다르고, 주문 저장은 모두 <code>DefaultOrderService.saveOrder()</code>를 호출한다.</p>
+<p><strong>RedisLuaOrderService</strong></p>
+<pre><code class="language-java"> @Override
+    @Transactional
+    public Mono&lt;Order&gt; createOrder(Long userId, Long productId, Long couponIssueId, String correlationId) {
+        String stockKey = &quot;{product:&quot; + productId + &quot;}:stock&quot;;
+
+        return reactiveRedisTemplate.execute(
+                        RedisScript.of(DECREMENT_STOCK_SCRIPT, Long.class),
+                        List.of(stockKey)
+                )
+                .next()
+                .flatMap(result -&gt; {
+                    if (result == -1L) {
+                        return Mono.error(new BusinessException(ErrorCode.PRODUCT_OUT_OF_STOCK));
+                    }
+                    return saveOrderWithOutbox(userId, productId, couponIssueId, correlationId)
+                            .onErrorResume(e -&gt; compensateRedisStock(stockKey).then(Mono.error(e)));
+                });
+    }
+</code></pre>
+<p><strong>OptimisticLockOrderService</strong></p>
+<pre><code class="language-java"> @Override
+    @Transactional
+    public Mono&lt;Order&gt; createOrder(Long userId, Long productId, Long couponIssueId, String correlationId) {
+        return decrementStock(productId)
+                .flatMap(product -&gt; defaultOrderService.saveOrder(userId, product, couponIssueId, correlationId));
+    }
+
+    private Mono&lt;Product&gt; decrementStock(Long productId) {
+        return productRepository.findById(productId)
+                .switchIfEmpty(Mono.error(new BusinessException(ErrorCode.PRODUCT_NOT_FOUND)))
+                .flatMap(product -&gt; {
+                    if (product.getStock() &lt;= 0) {
+                        return Mono.error(new BusinessException(ErrorCode.PRODUCT_OUT_OF_STOCK));
+                    }
+                    product.decrementStock();
+                    return productRepository.save(product);
+                })
+                .retryWhen(Retry.backoff(MAX_RETRY, RETRY_DELAY)
+                        .filter(e -&gt; e instanceof OptimisticLockingFailureException)
+                        .onRetryExhaustedThrow((spec, signal) -&gt;
+                                new BusinessException(ErrorCode.PRODUCT_ORDER_FAILED)));
+    }
+</code></pre>
+<p><strong>PessimisticLockOrderService</strong></p>
+<pre><code class="language-java">@Override
+    @Transactional
+    public Mono&lt;Order&gt; createOrder(Long userId, Long productId, Long couponIssueId, String correlationId) {
+        return databaseClient.sql(&quot;SELECT * FROM products WHERE id = :id FOR UPDATE&quot;)
+                .bind(&quot;id&quot;, productId)
+                .map((row, metadata) -&gt; row.get(&quot;stock&quot;, Integer.class))
+                .one()
+                .flatMap(stock -&gt; {
+                    if (stock == null || stock &lt;= 0) {
+                        return Mono.error(new BusinessException(ErrorCode.PRODUCT_OUT_OF_STOCK));
+                    }
+                    return databaseClient.sql(&quot;UPDATE products SET stock = stock - 1 WHERE id = :id&quot;)
+                            .bind(&quot;id&quot;, productId)
+                            .fetch()
+                            .rowsUpdated()
+                            .then(productRepository.findById(productId));
+                })
+                .flatMap(product -&gt; defaultOrderService.saveOrder(userId, product, couponIssueId, correlationId));
+    }
+</code></pre>
+<h2>전체 흐름</h2>
+<p>yml 한 줄만 바꾸면 재고 차감 방식 전체가 교체된다. <code>OrderController</code>는 <code>OrderService</code> 인터페이스만 바라보기 때문에 어떤 구현체가 들어오든 신경 쓰지 않아도 된다.</p>
+<hr/>
+<h1>삽질 기록</h1>
+<h2>@RequiredArgsConstructor와 상속의 충돌</h2>
+<p>처음에는 공통 로직을 <code>AbstractOrderService</code>라는 추상 클래스로 만들었다. 그런데 각 구현체에 <code>@RequiredArgsConstructor</code>를 붙이면 이런 에러가 났다.</p>
+<pre><code>Lombok needs a default constructor in the base class
+</code></pre>
+<p>Lombok이 <code>@RequiredArgsConstructor</code>로 생성자를 만들 때 부모 클래스에 기본 생성자(no-args constructor)가 없으면 어떤 <code>super()</code>를 호출해야 할지 모른다. 그래서 직접 생성자를 작성해야 하는데, 그러면 <code>@RequiredArgsConstructor</code>를 쓰는 의미가 없어진다.</p>
+<p>결국 추상 클래스를 없애고 <code>DefaultOrderService</code>로 공통 로직을 분리했다. Spring에서도 상속보다 컴포지션을 권장하는 방향이고, 결과적으로 더 깔끔한 구조가 됐다.</p>
+<p>Kafka 멱등성 처리로 인한 시그니처 전파</p>
+<p>Kafka는 At-Least-Once 보장이라 Consumer가 메시지를 두 번 받을 수 있다. 그러면 같은 주문이 두 번 저장되는 문제가 생긴다. 이를 막기 위해 correlationId를 기반으로 한 멱등성 체크를 추가했다.</p>
+<p>문제는 한 번의 변경이 8군데 이상 영향을 미쳤다는 점이다. OrderService 인터페이스 시그니처를 바꾸니 5개 구현체, 3개 Consumer 서브클래스, 컨트롤러까지 모두 수정해야 했다. 인터페이스 설계가 얼마나 중요한지, 그리고 한 번 정해진 시그니처를 바꾸는 비용이 얼마나 큰지 체감했다.</p>
+<p>다행히 이 작업으로 멱등성이 DB 레벨에서 강제되어 Kafka 재시도 시나리오에서 안정적으로 동작하게 됐다. 다음 시리즈에서 부하 테스트로 검증할 예정이다.</p>
+<hr/>
+<h1>Next</h1>
+<ul>
+<li>4가지 방식 각각 테스트 및 부하 비교</li>
+<li>Grafana + Prometheus 모니터링 연동</li>
+</ul></article></div></div>
+  </body>
+</html>

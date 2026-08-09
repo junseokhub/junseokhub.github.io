@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 02. Gradle 멀티모듈 구조와 서비스 설정 | Record, Then Build</title>
+    <meta name="description" content="Intro 1편에서 모노레포를 선택한 이유를 설명했다. 이번 편에서는 실제로 어떻게 구성했는지를 다룬다." />
+    <meta property="og:title" content="[Seatflow] 02. Gradle 멀티모듈 구조와 서비스 설정 | Record, Then Build" />
+    <meta property="og:description" content="Intro 1편에서 모노레포를 선택한 이유를 설명했다. 이번 편에서는 실제로 어떻게 구성했는지를 다룬다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-02-Gradle-%EB%A9%80%ED%8B%B0%EB%AA%A8%EB%93%88-%EA%B5%AC%EC%A1%B0%EC%99%80-%EC%84%9C%EB%B9%84%EC%8A%A4-%EC%84%A4%EC%A0%95/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-02-Gradle-%EB%A9%80%ED%8B%B0%EB%AA%A8%EB%93%88-%EA%B5%AC%EC%A1%B0%EC%99%80-%EC%84%9C%EB%B9%84%EC%8A%A4-%EC%84%A4%EC%A0%95/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 02. Gradle 멀티모듈 구조와 서비스 설정</h1><p>Lab/SeatFlow · 2026-05-31</p><h1>Intro</h1>
+<p>1편에서 모노레포를 선택한 이유를 설명했다. 이번 편에서는 실제로 어떻게 구성했는지를 다룬다.</p>
+<p>Gradle 멀티모듈이 어떻게 동작하는지, 공통 설정이 각 서비스에 어떻게 전달되는지, 그리고 각 서비스의 application.yml을 어떻게 잡았는지까지...</p>
+<hr/>
+<h2>Gradle 멀티모듈 동작 원리</h2>
+<p>Gradle 멀티모듈은 하나의 루트 프로젝트 아래 여러 서브 모듈을 두는 구조다. 루트의 settings.gradle.kts가 어떤 모듈이 있는지 선언하고, build.gradle.kts가 공통 설정을 담당한다.</p>
+<pre><code>seatflow-msa/                    &lt;- 루트 프로젝트
+ㄴ settings.gradle.kts           &lt;- 모듈 선언
+ㄴ build.gradle.kts              &lt;- 공통 설정
+ㄴ gradle.properties
+ㄴ gradlew
+ㄴ libs/
+   ㄴ common-web/               &lt;- 공통 라이브러리 모듈
+       ㄴ build.gradle.kts
+       ㄴ src/
+ㄴ services/
+    ㄴ auth-service/
+       ㄴ build.gradle.kts      &lt;- 서비스별 설정
+       ㄴ src/
+    ㄴ user-service/
+    ㄴ reservation-service/
+    ㄴ seat-service/
+    ㄴ payment-service/
+    ㄴ show-service/
+</code></pre>
+<h2>settings.gradle.kts</h2>
+<p>어떤 디렉토리가 Gradle 모듈인지 선언한다. 여기에 없으면 Gradle은 그 디렉토리를 모듈로 인식하지 않는다.</p>
+<pre><code>rootProject.name = &quot;seatflow-msa&quot;
+
+include(
+    &quot;libs:common-web&quot;,
+    &quot;services:auth-service&quot;,
+    &quot;services:user-service&quot;,
+    &quot;services:reservation-service&quot;,
+    &quot;services:seat-service&quot;,
+    &quot;services:payment-service&quot;,
+    &quot;services:show-service&quot;,
+)
+</code></pre>
+<p>services:auth-service처럼 콜론으로 경로를 표현한다. Gradle은 이 선언을 보고 services/auth-service 디렉토리를 :services:auth-service 모듈로 인식한다.</p>
+<p>한 가지 주의할 점이 있다. services:auth-service를 선언하면 Gradle이 중간 경로인 :services도 자동으로 빈 프로젝트로 생성한다. 이 :services에 공통 설정이 잘못 적용되면 빌드 에러가 난다. 뒤에서 이걸 어떻게 피하는지 설명한다.</p>
+<h2>루트 build.gradle.kts</h2>
+<p>공통 설정의 핵심이다. 4개 블록으로 나뉜다.</p>
+<pre><code>plugins {
+    java
+    id(&quot;org.springframework.boot&quot;) version &quot;3.5.13&quot; apply false
+    id(&quot;io.spring.dependency-management&quot;) version &quot;1.1.7&quot; apply false
+}
+
+allprojects {
+    group = &quot;com.seatflow&quot;
+    version = &quot;0.0.1-SNAPSHOT&quot;
+
+    repositories {
+        mavenCentral()
+    }
+}
+
+configure(subprojects.filter { it.parent?.name == &quot;services&quot; }) {
+    apply(plugin = &quot;java&quot;)
+    apply(plugin = &quot;io.spring.dependency-management&quot;)
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+
+    dependencies {
+        &quot;compileOnly&quot;(&quot;org.projectlombok:lombok&quot;)
+        &quot;annotationProcessor&quot;(&quot;org.projectlombok:lombok&quot;)
+        &quot;testImplementation&quot;(&quot;org.springframework.boot:spring-boot-starter-test&quot;)
+        &quot;testCompileOnly&quot;(&quot;org.projectlombok:lombok&quot;)
+        &quot;testAnnotationProcessor&quot;(&quot;org.projectlombok:lombok&quot;)
+        &quot;testRuntimeOnly&quot;(&quot;org.junit.platform:junit-platform-launcher&quot;)
+    }
+
+    tasks.withType&lt;Test&gt; {
+        useJUnitPlatform()
+    }
+
+    tasks.withType&lt;org.springframework.boot.gradle.tasks.bundling.BootJar&gt; {
+        layered {
+            enabled = true
+        }
+    }
+}
+
+configure(subprojects.filter { it.parent?.name == &quot;libs&quot; }) {
+    apply(plugin = &quot;java&quot;)
+    apply(plugin = &quot;io.spring.dependency-management&quot;)
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(21)
+        }
+    }
+}
+</code></pre>
+<p><strong>plugins {} 블록.</strong> apply false가 핵심이다. Spring Boot 플러그인을 루트에서 버전만 선언하고 적용은 하지 않는다. 각 서비스 build.gradle.kts에서 버전 없이 id(&quot;org.springframework.boot&quot;)로 가져다 쓸 수 있다. Spring Boot 버전을 올릴 때 루트 파일 한 줄만 수정하면 6개 서비스가 동시에 반영된다.</p>
+<p><strong>allprojects {} 블록.</strong> 루트 포함 모든 모듈에 적용된다. group, version, repositories처럼 진짜 공통인 것만 넣는다.</p>
+<p><strong>configure(subprojects.filter { ... }) {} 블록.</strong> 이게 핵심이다. subprojects {}를 쓰면 앞서 말한 빈 프로젝트 :services에도 설정이 적용된다. :services는 build.gradle.kts가 없어서 Spring Boot 플러그인이 없고, BOM도 없어서 Lombok 버전을 못 찾아 빌드 에러가 난다.</p>
+<p>it.parent?.name == &quot;services&quot;로 부모가 services인 모듈만 필터링한다. 실제 서비스 6개만 정확히 타겟팅된다.</p>
+<pre><code>:services:auth-service → it.parent.name = &quot;services&quot; →  적용
+:services              → it.parent.name = &quot;seatflow-msa&quot; →  제외
+</code></pre>
+<p><strong>dependencies {} 블록에서 문자열 방식.</strong> configure 블록 안에서는 compileOnly(...) 같은 Kotlin DSL 정적 함수를 쓸 수 없다. configure는 설정 시점에 동적으로 각 서브프로젝트에 적용되는 블록이라 정적 참조가 안 된다. 그래서 &quot;compileOnly&quot;(...) 문자열 방식으로 써야 한다. 반면 각 서비스의 build.gradle.kts 안에서는 정적 함수 방식(compileOnly(...))이 정상 동작한다.</p>
+<p><strong>configure(subprojects.filter { it.parent?.name == &quot;libs&quot; }) {} 블록.</strong> libs 하위 모듈에만 적용되는 공통 설정이다. services와 분리해서 관리한다.</p>
+<p><strong>tasks.withType&lt;BootJar&gt; { layered { enabled = true } }.</strong> Layered JAR을 활성화한다. 빌드된 JAR이 4개 레이어로 분리된다. Docker 이미지 빌드 시 코드만 바뀌면 application/ 레이어만 다시 빌드되고 나머지는 캐시에서 가져온다.</p>
+<h2>서비스별 build.gradle.kts</h2>
+<p>루트에서 공통을 다 처리했으니 서비스 파일은 해당 서비스에만 필요한 의존성만 선언하면 된다.</p>
+<pre><code>// reservation-service/build.gradle.kts
+plugins {
+    id(&quot;org.springframework.boot&quot;)
+    id(&quot;io.spring.dependency-management&quot;)
+}
+
+dependencies {
+    implementation(project(&quot;:libs:common-web&quot;))
+    implementation(&quot;org.springframework.boot:spring-boot-starter-actuator&quot;)
+    implementation(&quot;org.springframework.boot:spring-boot-starter-data-jpa&quot;)
+    implementation(&quot;org.springframework.boot:spring-boot-starter-validation&quot;)
+    implementation(&quot;org.springframework.boot:spring-boot-starter-web&quot;)
+    implementation(&quot;org.springframework.kafka:spring-kafka&quot;)
+    runtimeOnly(&quot;com.mysql:mysql-connector-j&quot;)
+
+    testImplementation(&quot;org.springframework.kafka:spring-kafka-test&quot;)
+}
+</code></pre>
+<p>버전 명시가 없다. Spring Boot BOM이 의존성 버전을 자동으로 관리한다. dependency-management 플러그인이 루트에서 적용됐기 때문이다.</p>
+<p>Lombok과 JUnit 관련 의존성도 없다. 루트에서 이미 공통으로 주입됐기 때문이다.</p>
+<p>show-service만 JPA와 MySQL 대신 MongoDB를 쓴다.</p>
+<pre><code>// show-service/build.gradle.kts
+plugins {
+    id(&quot;org.springframework.boot&quot;)
+    id(&quot;io.spring.dependency-management&quot;)
+}
+
+dependencies {
+    implementation(project(&quot;:libs:common-web&quot;))
+    implementation(&quot;org.springframework.boot:spring-boot-starter-actuator&quot;)
+    implementation(&quot;org.springframework.boot:spring-boot-starter-data-mongodb&quot;)
+    implementation(&quot;org.springframework.boot:spring-boot-starter-validation&quot;)
+    implementation(&quot;org.springframework.boot:spring-boot-starter-web&quot;)
+}
+</code></pre>
+<h2>빌드 명령어</h2>
+<p>멀티모듈에서 Gradle 명령은 모듈 경로를 앞에 붙인다.</p>
+<pre><code># 특정 서비스만 실행
+./gradlew :services:show-service:bootRun
+
+# 특정 서비스만 빌드
+./gradlew :services:reservation-service:build
+
+# 전체 빌드 (테스트 제외)
+./gradlew build -x test
+
+# 모듈 구조 확인
+./gradlew projects
+</code></pre>
+<hr/>
+<h2>라이브러리 모듈(libs) 주의점</h2>
+<p>서비스 모듈과 라이브러리 모듈은 Gradle 설정이 다르다. 공통 응답 포맷, 예외 처리 같은 코드를 libs/common-web으로 분리했는데, 여기서 중요한 차이가 생긴다.</p>
+<p>서비스는 org.springframework.boot 플러그인이 BOM을 자동으로 가져와서 의존성 버전 관리가 된다. 라이브러리 모듈에서 org.springframework.boot 플러그인 없이 io.spring.dependency-management만 쓰면 BOM을 못 가져와서 버전을 찾지 못한다.</p>
+<p>Could not find org.springframework.boot:spring-boot-starter-web:.<br/>
+Could not find org.projectlombok:lombok:.</p>
+<p><strong>방법 1: Spring Boot 플러그인 쓰되 bootJar 비활성화</strong></p>
+<pre><code class="language-kotlin">plugins {
+    java
+    id(&quot;org.springframework.boot&quot;)
+    id(&quot;io.spring.dependency-management&quot;)
+}
+
+tasks.withType&lt;org.springframework.boot.gradle.tasks.bundling.BootJar&gt; {
+    enabled = false
+}
+
+tasks.withType&lt;Jar&gt; {
+    enabled = true
+}
+
+dependencies {
+    implementation(&quot;org.springframework.boot:spring-boot-starter-web&quot;)
+}
+</code></pre>
+<p><strong>방법 2: BOM 직접 import</strong></p>
+<pre><code class="language-kotlin">dependencyManagement {
+    imports {
+        mavenBom(&quot;org.springframework.boot:spring-boot-dependencies:3.5.13&quot;)
+    }
+}
+</code></pre>
+<p>방법 1이 더 깔끔하다. Spring Boot 버전을 올릴 때 루트 파일 한 줄만 바꾸면 라이브러리 모듈도 자동으로 반영된다.</p>
+<h2>공통 모듈에 넣을 것 vs 넣지 말 것</h2>
+<p>common-web에 무엇을 넣을지 기준이 중요하다.</p>
+<p><strong>넣기 좋은 것</strong></p>
+<ul>
+<li>응답 포맷 (ApiResponse)</li>
+<li>공통 예외 클래스 (BusinessException, GlobalExceptionHandler)</li>
+<li>날짜 포맷 같은 유틸</li>
+</ul>
+<p><strong>넣으면 안 되는 것</strong></p>
+<ul>
+<li>특정 서비스 도메인 코드 (ShowErrorCode, ReservationErrorCode)</li>
+<li>DB 설정 (MySQL, MongoDB, Redis)</li>
+</ul>
+<hr/>
+<h1>gradle.properties</h1>
+<pre><code>org.gradle.parallel=true
+org.gradle.caching=true
+org.gradle.configuration-cache=false
+org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+</code></pre>
+<p>parallel=true는 여러 모듈을 병렬로 빌드한다. 6개 서비스를 순차 빌드하지 않고 동시에 처리해서 빌드 시간이 줄어든다.</p>
+<p>configuration-cache=false로 꺼뒀다. Testcontainers와 일부 Spring Boot 플러그인이 Configuration Cache 직렬화와 충돌하는 경우가 있다. 통합 테스트가 추가되는 시점에 재검토할 예정이다.</p>
+<hr/>
+<h1>application.yml 구조</h1>
+<p>각 서비스마다 src/main/resources/application.yml이 있다. 공통 설정 베이스는 동일하고 서비스별로 다른 부분만 다르게 잡았다.</p>
+<h2>공통 베이스</h2>
+<pre><code class="language-yml">spring:
+  application:
+    name: reservation-service   # 서비스마다 다름
+  threads:
+    virtual:
+      enabled: true             # Java 21 Virtual Thread
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+server:
+  port: 8083                    # 서비스마다 다름
+  shutdown: graceful            # 처리 중인 요청 완료 후 종료
+
+
+management:
+  server:
+    port: 9083                  # 앱 포트와 분리
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus, info
+  endpoint:
+    health:
+      probes:
+        enabled: true           # K8s liveness/readiness probe 호환
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+</code></pre>
+<p>보통 예제 코드에서는 server.port 하나만 달랑 있는 경우가 많다. 나머지 설정들은 없어도 서버가 뜨는 데 문제없기 때문이다. 하지만 K8s 위에서 실제 트래픽을 받는 서비스라면 얘기가 다르다. 하나씩 왜 추가했는지 설명한다.</p>
+<p><strong>Virtual Thread.</strong> spring.threads.virtual.enabled: true 한 줄로 Tomcat이 Virtual Thread 기반으로 동작한다. 기존 Thread-per-Request 모델은 I/O 대기 중 OS 스레드를 점유한다. DB 쿼리 하나 날리는 동안 스레드가 블록되고, 스레드 풀이 고갈되면 처리량이 급격히 떨어진다. Virtual Thread는 I/O 대기 중 OS 스레드를 반납하고 다른 요청을 처리한다. 코드 한 줄 변경 없이 처리량이 올라간다.</p>
+<p><strong>Graceful Shutdown.</strong> 이 설정이 없으면 K8s가 Pod에 종료 신호(SIGTERM)를 보냈을 때 처리 중이던 요청이 그냥 끊겨버린다. 예약 요청 처리 중에 Pod가 재시작되면 사용자 입장에서는 요청이 실패한 것처럼 보인다. server.shutdown: graceful로 설정하면 종료 신호를 받은 뒤 새로운 요청은 받지 않고, 처리 중인 요청이 완료될 때까지 기다렸다가 종료한다. timeout-per-shutdown-phase: 30s는 최대 30초까지 기다린다는 의미다. 30초가 지나면 강제 종료한다.</p>
+<p><strong>Management 포트 분리.</strong> Actuator를 앱 포트와 같은 포트(8080)에 두면 /actuator 경로가 외부에 그대로 노출된다. /actuator/env는 환경변수 전체를, /actuator/beans는 내부 Bean 목록을 보여준다. 보안상 외부에 열어두면 안 되는 엔드포인트들이다. 별도 포트(9080)로 분리하면 Ingress는 앱 포트(8080)만 외부에 열고, Prometheus는 K8s 내부 네트워크에서 management 포트를 스크랩한다. Actuator가 외부에 노출되지 않는다.</p>
+<p><strong>K8s Probe 호환.</strong> health.probes.enabled: true로 설정하면 /actuator/health/liveness와 /actuator/health/readiness가 자동으로 생긴다. 이 두 엔드포인트는 역할이 다르다. liveness는 &quot;이 Pod가 살아있는가&quot; — 응답 없으면 K8s가 Pod를 재시작한다. readiness는 &quot;이 Pod가 트래픽을 받을 준비가 됐는가&quot; — 응답 없으면 로드밸런서에서 제외한다. DB 연결이 안 됐을 때 readiness만 내리면 Pod는 죽지 않으면서 트래픽만 받지 않는다. 이 설정 없이는 두 엔드포인트가 생기지 않아서 K8s Probe를 제대로 연결할 수 없다.</p>
+<h2>MySQL 서비스 (auth, user, reservation, seat, payment)</h2>
+<pre><code class="language-yaml">spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/reservation_db
+    username: root
+    password: asdf123
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+    show-sql: false
+</code></pre>
+<p>ddl-auto: validate가 중요하다. 프로덕션에서 JPA가 테이블을 자동으로 생성하거나 변경하면 안 된다. validate는 Entity와 실제 테이블 스키마가 일치하는지만 확인한다. 테이블 생성과 변경은 Flyway가 전담한다.</p>
+<p>지금은 로컬 환경이라 접속 정보를 직접 넣었다. K8s에 올릴 때는 SPRING_DATASOURCE_URL, SPRING_DATASOURCE_USERNAME, SPRING_DATASOURCE_PASSWORD 환경변수로 주입받는다. Spring Boot가 이 환경변수를 자동으로 바인딩한다.</p>
+<h2>MongoDB 서비스 (show)</h2>
+<pre><code class="language-yaml">spring:
+  data:
+    mongodb:
+      uri: mongodb://root:asdf123@localhost:27017/show_db?authSource=admin
+</code></pre>
+<p>authSource=admin이 필요하다. MongoDB에서 root 계정은 admin DB에서 생성되기 때문에 인증을 admin DB에서 처리해야 한다.</p>
+<h2>서비스별 포트 정리</h2>
+<table><thead><tr><th><strong>서비스명</strong></th><th><strong>포트 1 (HTTP)</strong></th><th><strong>포트 2 (gRPC/내부)</strong></th></tr></thead><tbody><tr><td>auth-service</td><td>8081</td><td>9081</td></tr><tr><td>user-service</td><td>8082</td><td>9082</td></tr><tr><td>reservation-service</td><td>8083</td><td>9083</td></tr><tr><td>seat-service</td><td>8084</td><td>9084</td></tr><tr><td>payment-service</td><td>8085</td><td>9085</td></tr><tr><td>show-service</td><td>8086</td><td>9086</td></tr></tbody></table>
+<p>K8s에서는 서비스마다 Pod가 분리되어 있어 포트 충돌이 없다. 전부 8080/9080을 써도 된다. 로컬에서 동시에 띄울 때만 포트를 다르게 해야 한다.</p>
+<hr/>
+<h1>동작 확인</h1>
+<p>6개 서비스를 각각 bootRun으로 띄운 뒤 health check로 확인한다.</p>
+<pre><code class="language-bash">curl http://localhost:9081/actuator/health  # auth
+curl http://localhost:9082/actuator/health  # user
+curl http://localhost:9083/actuator/health  # reservation
+curl http://localhost:9084/actuator/health  # seat
+curl http://localhost:9085/actuator/health  # payment
+curl http://localhost:9086/actuator/health  # show
+</code></pre>
+<pre><code>{&quot;status&quot;:&quot;UP&quot;,&quot;groups&quot;:[&quot;liveness&quot;,&quot;readiness&quot;]}
+</code></pre>
+<p>6개 전부 UP. DB 연결(MySQL 5개, MongoDB 1개)과 Virtual Thread, Graceful Shutdown, Actuator까지 기본 설정이 완료됐다.</p>
+<hr/>
+<h1>Next</h1>
+<p>GitOps 파이프라인 — Jenkins + ArgoCD Image Updater + ArgoCD</p></article></div></div>
+  </body>
+</html>

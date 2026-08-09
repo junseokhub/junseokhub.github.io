@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 01. Spring WebFlux로 선착순 쿠폰 발급 설계 | Record, Then Build</title>
+    <meta name="description" content="Intro 선착순 쿠폰 발급 시스템은 트래픽이 가장 극단적으로 몰리는 케이스 중 하나다. 특정 시점에 수만, 수십만 건의 요청이 동시에 들어오고, 서버는 이를 빠르게 처리하면서도 중복 없이 정확한 결과를 보장해야 한다. 이러한 문제는" />
+    <meta property="og:title" content="[Coupon&amp;Order] 01. Spring WebFlux로 선착순 쿠폰 발급 설계 | Record, Then Build" />
+    <meta property="og:description" content="Intro 선착순 쿠폰 발급 시스템은 트래픽이 가장 극단적으로 몰리는 케이스 중 하나다. 특정 시점에 수만, 수십만 건의 요청이 동시에 들어오고, 서버는 이를 빠르게 처리하면서도 중복 없이 정확한 결과를 보장해야 한다. 이러한 문제는" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-01-Spring-WebFlux%EB%A1%9C-%EC%84%A0%EC%B0%A9%EC%88%9C-%EC%BF%A0%ED%8F%B0-%EB%B0%9C%EA%B8%89-%EC%84%A4%EA%B3%84/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-01-Spring-WebFlux%EB%A1%9C-%EC%84%A0%EC%B0%A9%EC%88%9C-%EC%BF%A0%ED%8F%B0-%EB%B0%9C%EA%B8%89-%EC%84%A4%EA%B3%84/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 01. Spring WebFlux로 선착순 쿠폰 발급 설계</h1><p>Lab/Coupon&amp;Order · 2026-04-17</p><h1>Intro</h1>
+<p>선착순 쿠폰 발급 시스템은 트래픽이 가장 극단적으로 몰리는 케이스 중 하나다. 특정 시점에 수만, 수십만 건의 요청이 동시에 들어오고, 서버는 이를 빠르게 처리하면서도 중복 없이 정확한 결과를 보장해야 한다. 이러한 문제는 단순한 동기 방식의 API 구조로는 한계가 분명하게 드러난다. 특히 동시성 제어와 처리량 문제는 실제 트래픽 상황에서 쉽게 병목으로 이어진다.</p>
+<p>이번 시리즈에서는 초당 10만 건 이상의 요청을 처리할 수 있는 쿠폰 발급 시스템을 목표로, Spring WebFlux 기반의 비동기 아키텍처를 설계하고 Redis를 활용한 동시성 제어 방식을 적용해볼 예정이다. 또한 k6를 이용해 실제 트래픽과 유사한 부하를 생성하고, 시스템의 한계를 확인하며 점진적으로 개선해 나가는 과정을 기록한다</p>
+<h1>Purpose</h1>
+<h2>초당 10만 건을 처리할 수 있는 API 서버를 만들어보자!!!</h2>
+<h1>Tech Stack</h1>
+<p><strong>Framework</strong>: Spring Boot 4.0.5 + WebFlux
+<strong>Language</strong>: Java 21
+<strong>Build</strong>: Gradle Kotlin DSL
+<strong>DB</strong>: MySQL + R2DBC
+<strong>Cache</strong>: Redis Cluster
+<strong>Auth</strong>: JWT (Access Token + Refresh Token Rotation)
+<strong>Migration</strong>: Flyway
+<strong>Load Test</strong>: k6</p>
+<h1>Key Challenges</h1>
+<h2>동시성 제어</h2>
+<ul>
+<li>여러 요청이 동시에 들어올 때 데이터 정합성을 어떻게 보장할건가?
+<ul>
+<li>선착순 쿠폰 발급에서 가장 먼저 부딪히는 문제다. 단순하게 구현하면 아래와 같은 race condition이 발생한다.</li>
+</ul>
+</li>
+</ul>
+<pre><code>1. A가 재고 확인 → 1개 남음
+2. B가 재고 확인 → 1개 남음
+3. A가 발급 → 재고 0개
+4. B가 발급 → 재고 -1개 (중복 발급!)
+</code></pre>
+<pre><code>- 이를 해결하기 위해 Redis Lua 스크립트를 활용할 예정이다. Redis는 싱글 스레드로 동작하고, Lua 스크립트는 원자적으로 실행되어 중간에 다른 명령이 절대 끼어들 수 없다.
+</code></pre>
+<h2>처리량 (Throughput)</h2>
+<ul>
+<li>초당 10만 건 이상의 요청을 안정적으로 처리할 수 있나?
+<ul>
+<li>Spring MVC는 요청마다 스레드를 할당하는 Thread-per-Request 모델이다. 동시 요청이 많아지면 스레드 풀이 고갈되고 처리량이 급격히 떨어진다. Spring WebFlux는 Non-blocking I/O 기반으로, 적은 수의 스레드로 훨씬 많은 요청을 처리할 수 있다. DB도 동일한 이유로 JPA 대신 R2DBC를 선택했다.</li>
+</ul>
+</li>
+</ul>
+<h2>응답 속도 (Latency)</h2>
+<ul>
+<li>높은 처리량 환경에서도 사용자 응답 속도를 유지할 수 있나?
+<ul>
+<li>재고 처리를 DB가 아닌 Redis에서 먼저 처리할 예정이다. Redis에서 발급 가능 여부를 판단하고, 성공한 경우에만 DB에 발급 내역을 저장하는 구조로 응답 속도를 최소화해 볼 예정이다.</li>
+</ul>
+</li>
+</ul>
+<h2>확장성 (Scalability)</h2>
+<ul>
+<li>트래픽 증가에 따라 수평 확장이 가능한 구조인가?
+<ul>
+<li>Redis Cluster(개인 서버에 이미 구축되어있어서 사용할 것이다.)를 사용해 캐시 레이어를 수평 확장 가능하게 구성할 예정이다. 단, Lua 스크립트에서 여러 키를 다룰 때 모두 같은 슬롯에 있어야 하는 제약이 있어 hashtag를 활용할 예정이다.</li>
+</ul>
+</li>
+</ul>
+<p>java</p>
+<pre><code>&quot;{coupon:1}:stock&quot;  // 중괄호 안의 값으로 슬롯 결정
+&quot;{coupon:1}:users&quot;  // 같은 슬롯 보장
+</code></pre>
+<h1>Architecture</h1>
+<pre><code>Client -&gt; Spring WebFlux (Netty) 
+            ㄴ Redis Cluster (재고 확인 + 차감 → Lua 스크립트 예정)
+              ㄴ MySQL R2DBC (발급 내역 저장 예정)
+</code></pre>
+<h1>Next</h1>
+<ul>
+<li>WebFlux는 어떻게 되는거지?</li>
+<li>Non-Blocking 아키텍처</li>
+</ul></article></div></div>
+  </body>
+</html>

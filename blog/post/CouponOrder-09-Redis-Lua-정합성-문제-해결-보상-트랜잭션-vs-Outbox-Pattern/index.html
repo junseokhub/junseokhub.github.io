@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 09. Redis Lua 정합성 문제 해결 - 보상 트랜잭션 vs Outbox Pattern | Record, Then Build</title>
+    <meta name="description" content="Intro 8편에서 Redis Lua Consumer 방식을 테스트했을 때 정합성이 깨지는 것을 확인했다." />
+    <meta property="og:title" content="[Coupon&amp;Order] 09. Redis Lua 정합성 문제 해결 - 보상 트랜잭션 vs Outbox Pattern | Record, Then Build" />
+    <meta property="og:description" content="Intro 8편에서 Redis Lua Consumer 방식을 테스트했을 때 정합성이 깨지는 것을 확인했다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-09-Redis-Lua-%EC%A0%95%ED%95%A9%EC%84%B1-%EB%AC%B8%EC%A0%9C-%ED%95%B4%EA%B2%B0-%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98-vs-Outbox-Pattern/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-09-Redis-Lua-%EC%A0%95%ED%95%A9%EC%84%B1-%EB%AC%B8%EC%A0%9C-%ED%95%B4%EA%B2%B0-%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98-vs-Outbox-Pattern/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 09. Redis Lua 정합성 문제 해결 - 보상 트랜잭션 vs Outbox Pattern</h1><p>Lab/Coupon&amp;Order · 2026-05-02</p><h1>Intro</h1>
+<p>8편에서 Redis Lua Consumer 방식을 테스트했을 때 정합성이 깨지는 것을 확인했다.</p>
+<pre><code>orders: 10,000건 
+DB stock: 10,000   (차감 안 됨)
+Redis stock: 0 
+</code></pre>
+<p>Redis에서 재고를 차감했는데 DB stock은 그대로였다. Redis와 DB는 서로 다른 시스템이라 하나의 트랜잭션으로 묶을 수 없기 때문이다. 이번 편에서 이 문제를 해결한다.</p>
+<hr/>
+<h1>왜 정합성이 깨지는거지?</h1>
+<p>Redis Lua Consumer의 처리 흐름은 다음과 같다.</p>
+<pre><code>1. Redis Lua로 stock 차감
+2. DB에 주문 저장
+</code></pre>
+<p>1번이 성공해도 2번이 실패하면 Redis stock은 차감됐는데 주문은 없는 상태가 된다. Redis와 DB는 서로 다른 시스템이라 네트워크 장애, 타임아웃, 예외 등 다양한 이유로 불일치가 발생한다.</p>
+<p>이를 해결하는 방법으로 보상 트랜잭션과 Outbox Pattern 두 가지를 시도했다.</p>
+<hr/>
+<h1>보상 트랜잭션</h1>
+<h2>개념</h2>
+<p>Redis 차감 후 DB 저장이 실패하면 Redis 재고를 복구(INCR)하는 방식이다.</p>
+<pre><code>Redis 차감 성공
+    → DB 저장 성공 → 완료
+    → DB 저장 실패 → Redis INCR으로 복구 (보상)
+</code></pre>
+<h2>구현</h2>
+<pre><code class="language-java">@Override
+@Transactional
+public Mono&lt;Order&gt; createOrder(Long userId, Long productId, Long couponIssueId) {
+    String stockKey = &quot;{product:&quot; + productId + &quot;}:stock&quot;;
+
+    return reactiveRedisTemplate.execute(
+                    RedisScript.of(DECREMENT_STOCK_SCRIPT, Long.class),
+                    List.of(stockKey)
+            )
+            .next()
+            .flatMap(result -&gt; {
+                if (result == -1L) {
+                    return Mono.error(new BusinessException(ErrorCode.PRODUCT_OUT_OF_STOCK));
+                }
+                // Redis 차감 성공 이후 실패 시 복구
+                return productRepository.findById(productId)
+                        .switchIfEmpty(Mono.error(new BusinessException(ErrorCode.PRODUCT_NOT_FOUND)))
+                        .flatMap(product -&gt; defaultOrderService.saveOrder(userId, product, couponIssueId))
+                        .onErrorResume(e -&gt; compensateRedisStock(stockKey).then(Mono.error(e)));
+            });
+}
+
+private Mono&lt;Void&gt; compensateRedisStock(String stockKey) {
+    return reactiveRedisTemplate.opsForValue()
+            .increment(stockKey)
+            .retryWhen(Retry.backoff(3, Duration.ofMillis(50)))
+            .doOnSuccess(v -&gt; log.info(&quot;Redis 재고 복구 완료&quot;))
+            .doOnError(e -&gt; log.error(&quot;Redis 재고 복구 최종 실패! 수동 처리 필요&quot;))
+            .then();
+}
+</code></pre>
+<h2>한계</h2>
+<p>보상 트랜잭션은 &quot;최선을 다하는&quot; 방식이지 &quot;보장하는&quot; 방식이 아니다.</p>
+<p><strong>복구 자체가 실패할 수 있다.</strong> Redis 차감은 성공했는데 DB 저장도 실패하고, 복구 INCR도 실패하면 재고가 영구적으로 사라진다.</p>
+<p><strong>타이밍 이슈가 있다.</strong> 복구 성공과 다른 사용자의 재고 차감 사이에 타이밍 문제가 생길 수 있다.</p>
+<p><strong>두 시스템의 원자성은 보장할 수 없다.</strong> Redis와 DB는 서로 다른 시스템이라 하나의 트랜잭션으로 묶는 것이 불가능하다. 보상 트랜잭션은 이 근본적인 문제를 해결하지 못한다.</p>
+<p>결국 보상 트랜잭션은 이 구조에서 완벽한 해결책이 되지 못한다.</p>
+<hr/>
+<h1>Outbox Pattern</h1>
+<h2>개념</h2>
+<p>Outbox Pattern은 DB를 Source of Truth로 사용하는 메시지 전달 보장 패턴이다. 이벤트 유실 없이 다른 시스템과 동기화할 수 있다.</p>
+<pre><code>주문 요청
+    -&gt; DB: 주문 저장 + Outbox 이벤트 저장 (같은 트랜잭션)
+    -&gt; Scheduler: Outbox PENDING 읽어서 DB stock 차감
+    -&gt; 성공 -&gt; Outbox PROCESSED
+    -&gt; 실패 -&gt; 재시도 -&gt; 최종 실패 -&gt; FAILED
+</code></pre>
+<p>핵심은 주문 저장과 Outbox 이벤트 저장이 같은 DB 트랜잭션으로 묶인다는 점이다. DB 트랜잭션은 원자적이기 때문에 둘 다 성공하거나 둘 다 실패한다. 주문이 저장됐다면 Outbox 이벤트도 반드시 저장된 것이고, 그 반대도 마찬가지다. DB가 보장한다.</p>
+<h2>Outbox 테이블</h2>
+<pre><code class="language-sql">CREATE TABLE outbox (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    aggregate_id BIGINT NOT NULL,
+    event_type VARCHAR(50) NOT NULL,
+    payload TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT &#x27;PENDING&#x27;,
+    retry_count INT NOT NULL DEFAULT 0,
+    failed_reason VARCHAR(500),
+    created_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)
+);
+</code></pre>
+<p><code>status</code> 컬럼으로 처리 상태를 추적한다. <code>PENDING</code> → <code>PROCESSING</code> → <code>PROCESSED</code> / <code>FAILED</code> 흐름으로 관리한다. <code>PROCESSING</code> 상태를 별도로 두는 이유는 Scheduler가 같은 이벤트를 중복 처리하는 것을 방지하기 위해서다.</p>
+<h2>RedisLuaOrderService 수정</h2>
+<pre><code class="language-java">@Override
+@Transactional
+public Mono&lt;Order&gt; createOrder(Long userId, Long productId, Long couponIssueId) {
+    String stockKey = &quot;{product:&quot; + productId + &quot;}:stock&quot;;
+
+    return reactiveRedisTemplate.execute(
+                    RedisScript.of(DECREMENT_STOCK_SCRIPT, Long.class),
+                    List.of(stockKey)
+            )
+            .next()
+            .flatMap(result -&gt; {
+                if (result == -1L) {
+                    return Mono.error(new BusinessException(ErrorCode.PRODUCT_OUT_OF_STOCK));
+                }
+                return saveOrderWithOutbox(userId, productId, couponIssueId)
+                        .onErrorResume(e -&gt; compensateRedisStock(stockKey).then(Mono.error(e)));
+            });
+}
+
+private Mono&lt;Order&gt; saveOrderWithOutbox(Long userId, Long productId, Long couponIssueId) {
+    return productRepository.findById(productId)
+            .switchIfEmpty(Mono.error(new BusinessException(ErrorCode.PRODUCT_NOT_FOUND)))
+            .flatMap(product -&gt; defaultOrderService.saveOrder(userId, product, couponIssueId))
+            .flatMap(order -&gt; {
+                try {
+                    String payload = objectMapper.writeValueAsString(
+                            new OutboxPayload(productId, order.getId())
+                    );
+                    return outboxRepository.save(
+                            Outbox.builder()
+                                    .aggregateId(productId)
+                                    .eventType(&quot;STOCK_DECREMENT&quot;)
+                                    .payload(payload)
+                                    .build()
+                    ).thenReturn(order);
+                } catch (Exception e) {
+                    return Mono.error(e);
+                }
+            });
+}
+</code></pre>
+<p>주문 저장과 Outbox 저장이 <code>@Transactional</code> 안에서 같이 실행된다.</p>
+<h2>OutboxScheduler</h2>
+<pre><code class="language-java">@Scheduled(fixedDelay = 1000)
+public void processOutbox() {
+    if (!running.compareAndSet(false, true)) {
+        return;  // 이전 실행이 끝나지 않으면 스킵
+    }
+    outboxRepository.findByStatusOrderByCreatedAtAsc(&quot;PENDING&quot;)
+            .flatMap(outbox -&gt; {
+                outbox.markProcessing();  // 중복 처리 방지
+                return outboxRepository.save(outbox);
+            })
+            .flatMap(outbox -&gt; {
+                try {
+                    OutboxPayload payload = objectMapper.readValue(
+                            outbox.getPayload(), OutboxPayload.class);
+
+                    return databaseClient.sql(
+                            &quot;UPDATE products SET stock = stock - 1 WHERE id = :id AND stock &gt; 0&quot;)
+                            .bind(&quot;id&quot;, payload.productId())
+                            .fetch()
+                            .rowsUpdated()
+                            .flatMap(rows -&gt; {
+                                outbox.markProcessed();
+                                return outboxRepository.save(outbox);
+                            })
+                            .onErrorResume(e -&gt; {
+                                outbox.markFailed(e.getMessage());
+                                return outboxRepository.save(outbox);
+                            });
+                } catch (Exception e) {
+                    outbox.markFailed(e.getMessage());
+                    return outboxRepository.save(outbox);
+                }
+            })
+            .doFinally(signal -&gt; running.set(false))
+            .subscribe();
+}
+</code></pre>
+<p><code>AtomicBoolean</code>으로 Scheduler 중복 실행을 방지한다. <code>AND stock &gt; 0</code> 조건으로 음수 차감을 방지한다.</p>
+<hr/>
+<h1>테스트 결과</h1>
+<pre><code>orders: 10,000건 
+DB stock: 0 
+Redis stock: 0 
+Outbox PROCESSED: 10,000건 
+DLQ: 0
+</code></pre>
+<p>Redis-DB 정합성이 완벽하게 보장됐다.</p>
+<hr/>
+<h1>두 방식 비교</h1>
+<table><thead><tr><th><strong>비교 항목</strong></th><th><strong>보상 트랜잭션 (Saga)</strong></th><th><strong>Transactional Outbox</strong></th></tr></thead><tbody><tr><td>결과적 정합성</td><td>보장 (최종 정합)</td><td>보장 (메시지 발행 보장)</td></tr><tr><td>구현 복잡도</td><td>높음 (롤백 로직 직접 구현)</td><td>보통~높음 (인프라/스케줄러 구축)</td></tr><tr><td>복구 실패 가능성</td><td>있음 (수동 개입 필요할 수 있음)</td><td>있음 (소비측 장애 시 재시도 필요)</td></tr><tr><td>DB Source of Truth</td><td>개별 서비스 DB가 기준</td><td>로컬 DB Outbox 테이블이 기준</td></tr><tr><td>처리 속도</td><td>빠름 (즉시 비동기 호출)</td><td>중간 (Scheduler/CDC 주기에 의존)</td></tr></tbody></table>
+<hr/>
+<h1>Outbox Pattern의 트레이드오프</h1>
+<p>Outbox Pattern은 정합성을 완벽하게 보장하지만 처리 속도가 Scheduler에 의존한다. Scheduler가 1초마다 돌면서 DB stock을 차감하기 때문에 Consumer 처리가 완료된 후에도 DB 동기화까지 시간이 걸린다.</p>
+<hr/>
+<h1>더 나은 방법들</h1>
+<p>현재 구현은 기본적인 Outbox Pattern이다. 실제 서비스에서는 다음과 같은 방법으로 개선하거나 대체할 수 있다.</p>
+<p><strong>CDC (Change Data Capture)</strong><br/>
+Debezium 같은 도구를 사용하면 DB의 변경 로그(binlog)를 직접 읽어서 이벤트를 발행할 수 있다. Scheduler 없이 DB 변경이 발생하는 즉시 처리되기 때문에 지연이 거의 없다. 별도 인프라가 필요하지만 대규모 서비스에서 가장 많이 채택하는 방식이다.</p>
+<p><strong>Scheduler 개선</strong><br/>
+현재 <code>fixedDelay = 1000ms</code>로 단일 스레드로 처리하고 있다. 딜레이를 줄이거나 여러 워커로 병렬 처리하면 처리량을 높일 수 있다. FAILED 이벤트를 자동으로 재처리하는 로직과 한계 초과 시 알림을 추가하면 운영 안정성도 높아진다.</p>
+<p><strong>이중 쓰기 (Dual Write)</strong><br/>
+Redis와 DB에 동시에 쓰는 방식이다. 구현이 단순하지만 두 쓰기 사이에 실패가 발생하면 불일치가 생기기 때문에 원자성 보장이 불가능해 권장하지 않는다.</p>
+<hr/>
+<h1>Next</h1>
+<ul>
+<li>Spring MVC + Virtual Thread vs Spring WebFlux 성능 비교</li>
+</ul></article></div></div>
+  </body>
+</html>

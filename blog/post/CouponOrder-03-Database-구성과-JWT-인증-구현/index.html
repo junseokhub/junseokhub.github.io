@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 03. Database 구성과 JWT 인증 구현 | Record, Then Build</title>
+    <meta name="description" content="Intro 2편에서 WebFlux의 동작 방식과 Non-blocking 아키텍처를 살펴봤다. 이번 편에서는 실제 개발의 첫 단계인 데이터베이스 구성과 JWT 기반 인증 구현을 다룬다." />
+    <meta property="og:title" content="[Coupon&amp;Order] 03. Database 구성과 JWT 인증 구현 | Record, Then Build" />
+    <meta property="og:description" content="Intro 2편에서 WebFlux의 동작 방식과 Non-blocking 아키텍처를 살펴봤다. 이번 편에서는 실제 개발의 첫 단계인 데이터베이스 구성과 JWT 기반 인증 구현을 다룬다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-03-Database-%EA%B5%AC%EC%84%B1%EA%B3%BC-JWT-%EC%9D%B8%EC%A6%9D-%EA%B5%AC%ED%98%84/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-03-Database-%EA%B5%AC%EC%84%B1%EA%B3%BC-JWT-%EC%9D%B8%EC%A6%9D-%EA%B5%AC%ED%98%84/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 03. Database 구성과 JWT 인증 구현</h1><p>Lab/Coupon&amp;Order · 2026-04-19</p><h1>Intro</h1>
+<p>2편에서 WebFlux의 동작 방식과 Non-blocking 아키텍처를 살펴봤다. 이번 편에서는 실제 개발의 첫 단계인 데이터베이스 구성과 JWT 기반 인증 구현을 다룬다.</p>
+<p>단순히 테이블을 만들고 로그인을 구현하는 것처럼 보이지만, WebFlux 환경에서는 MVC와 다르게 고려해야 할 부분들이 있다. Flyway로 마이그레이션을 관리하는 방법, Spring Security를 WebFlux에 맞게 설정하는 방법, 그리고 Refresh Token을 안전하게 다루는 방법을 코드와 함께 정리한다.</p>
+<hr/>
+<h1>ERD 설계</h1>
+<pre><code>users
+ㄴid (PK)
+ㄴusername (UNIQUE)
+ㄴpassword (BCrypt)
+ㄴrole (USER / ADMIN)
+ㄴcreated_at
+ㄴ updated_at
+
+coupons
+ㄴid (PK)
+ㄴname
+ㄴtype (PERCENT / FIXED / FREE)
+ㄴdiscount_value
+ㄴtotal_stock
+ㄴremaining_stock
+ㄴcreated_at
+ㄴ updated_at
+
+coupon_issues
+ㄴid (PK)
+ㄴcoupon_id (FK → coupons)
+ㄴuser_id (FK → users)
+ㄴissued_at
+ㄴcreated_at
+ㄴ updated_at
+ㄴ UNIQUE (coupon_id, user_id)
+</code></pre>
+<p><code>coupon_issues</code>에 <code>UNIQUE(coupon_id, user_id)</code> 제약을 걸었다. Redis Lua 스크립트에서 1차로 막고, DB에서 2차로 막는 이중 방어 구조다.</p>
+<hr/>
+<h1>Flyway로 마이그레이션 관리</h1>
+<p>DB 스키마를 코드로 관리하기 위해 Flyway를 사용했다. <code>resources/db/migration/</code> 경로에 SQL 파일을 버전 순서대로 관리한다.</p>
+<pre><code>resources/
+ㄴ db/
+    ㄴ migration/
+        ㄴV1__init.sql        # 테이블 생성
+        ㄴ V2__init_data.sql   # 초기 데이터 (admin 계정, 쿠폰)
+</code></pre>
+<p>Flyway는 기본적으로 Spring Boot가 자동 실행하지만, WebFlux 환경에서는 R2DBC가 기본 DataSource라 Flyway가 JDBC DataSource를 찾지 못하는 문제가 생긴다. 이를 해결하기 위해 Flyway를 직접 Bean으로 등록했다.</p>
+<pre><code class="language-java">@Configuration
+public class FlywayConfig {
+
+    @Bean(initMethod = &quot;migrate&quot;)
+    public Flyway flyway(FlywayProperties flywayProperties) {
+        return Flyway.configure()
+                .dataSource(
+                        flywayProperties.url(),
+                        flywayProperties.user(),
+                        flywayProperties.password()
+                )
+                .locations(flywayProperties.locations().toArray(String[]::new))
+                .baselineOnMigrate(true)
+                .load();
+    }
+}
+</code></pre>
+<p><code>application.yml</code>에서 Flyway 자동 실행을 끄고 직접 관리한다.</p>
+<pre><code class="language-yml">spring:
+  flyway:
+    enabled: false
+    url: jdbc:mysql://localhost:3306/load_testing
+    user: root
+    password: password
+    locations: classpath:db/migration
+</code></pre>
+<hr/>
+<h1>JWT 인증 구조</h1>
+<p>JWT는 Access Token과 Refresh Token 두 가지로 구성했다.</p>
+<p><strong>Access Token</strong></p>
+<ul>
+<li>만료 시간: 1시간</li>
+<li>저장 위치: 응답 바디 → 클라이언트 메모리</li>
+<li>역할: API 요청 인증</li>
+</ul>
+<p><strong>Refresh Token</strong></p>
+<ul>
+<li>만료 시간: 7일</li>
+<li>저장 위치: HttpOnly Cookie</li>
+<li>역할: Access Token 재발급</li>
+</ul>
+<p>Access Token을 메모리에 저장하는 이유는 localStorage에 저장하면 XSS 공격으로 탈취될 수 있기 때문이다. 메모리에 저장하면 페이지를 새로고침하면 사라지지만, Refresh Token으로 자동 재발급하면 된다.</p>
+<p>Refresh Token을 HttpOnly Cookie에 저장하는 이유도 동일하다. JavaScript로 접근 자체가 불가능하기 때문에 XSS 공격으로부터 안전하다.</p>
+<h2>Refresh Token Rotation</h2>
+<p>Refresh Token을 재사용하면 탈취 시 장기간 악용될 수 있다. 이를 방지하기 위해 <strong>Refresh Token Rotation</strong>을 적용했다. 재발급 시 새로운 Refresh Token을 발급하고 기존 토큰을 무효화한다.</p>
+<pre><code class="language-java">public Mono&lt;TokenResult&gt; reissue(String refreshToken) {
+    try {
+        jwtProvider.validateToken(refreshToken);
+    } catch (BusinessException e) {
+        if (e.getErrorCode() == ErrorCode.TOKEN_EXPIRED) {
+            return Mono.error(new BusinessException(ErrorCode.REFRESH_TOKEN_EXPIRED));
+        }
+        return Mono.error(e);
+    }
+
+    Long userId = jwtProvider.getUserId(refreshToken);
+
+    return reactiveRedisTemplate.opsForValue()
+            .get(&quot;refresh:&quot; + userId)
+            .switchIfEmpty(Mono.error(new BusinessException(ErrorCode.TOKEN_INVALID)))
+            .flatMap(savedToken -&gt; {
+                // Redis에 저장된 토큰과 요청 토큰 비교 → 탈취 감지
+                if (!savedToken.equals(refreshToken)) {
+                    return reactiveRedisTemplate.opsForValue()
+                            .delete(&quot;refresh:&quot; + userId)
+                            .then(Mono.error(new BusinessException(ErrorCode.TOKEN_INVALID)));
+                }
+
+                String newAccessToken = jwtProvider.generateAccessToken(userId);
+                String newRefreshToken = jwtProvider.generateRefreshToken(userId);
+
+                return reactiveRedisTemplate.opsForValue()
+                        .set(&quot;refresh:&quot; + userId, newRefreshToken,
+                                Duration.ofMillis(jwtProperties.refreshTokenExpiration()))
+                        .thenReturn(new TokenResult(newAccessToken, newRefreshToken));
+            });
+}
+</code></pre>
+<p>Redis에 저장된 토큰과 요청으로 온 토큰이 다르면 탈취된 것으로 판단하고 즉시 무효화한다.</p>
+<h2>로그아웃 처리</h2>
+<p>Access Token은 만료되기 전까지 유효하기 때문에 단순히 Redis에서 Refresh Token을 삭제하는 것만으로는 부족하다. Access Token을 블랙리스트에 등록해 만료 전에도 차단해야 한다.</p>
+<pre><code class="language-java">public Mono&lt;Void&gt; logout(Long userId, String accessToken) {
+    // 남은 만료 시간만큼만 블랙리스트에 저장 → Redis 메모리 낭비 방지
+    long expiration = jwtProvider.getClaims(accessToken)
+            .getExpiration()
+            .getTime() - System.currentTimeMillis();
+
+    return tokenBlacklistService.addBlacklist(accessToken, Duration.ofMillis(expiration))
+            .then(reactiveRedisTemplate.opsForValue()
+                    .delete(&quot;refresh:&quot; + userId)
+                    .then());
+}
+</code></pre>
+<hr/>
+<h1>Spring Security WebFlux 설정</h1>
+<p>MVC의 <code>HttpSecurity</code> 대신 WebFlux에서는 <code>ServerHttpSecurity</code>를 사용한다.</p>
+<pre><code class="language-java">@Configuration
+@EnableWebFluxSecurity
+@RequiredArgsConstructor
+public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @Bean
+    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+        return http
+                .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .formLogin(ServerHttpSecurity.FormLoginSpec::disable)
+                .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
+                // JWT Stateless → 세션 저장 안 함
+                .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
+                .authorizeExchange(exchanges -&gt; exchanges
+                        .pathMatchers(&quot;/api/auth/**&quot;).permitAll()
+                        .anyExchange().authenticated()
+                )
+                .addFilterAt(jwtAuthenticationFilter, SecurityWebFiltersOrder.AUTHENTICATION)
+                .build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+}
+</code></pre>
+<p>JWT 필터는 <code>WebFilter</code>를 구현해서 모든 요청에서 토큰을 검증하고 인증 정보를 <code>ReactiveSecurityContextHolder</code>에 저장한다.</p>
+<pre><code class="language-java">@Component
+@RequiredArgsConstructor
+public class JwtAuthenticationFilter implements WebFilter {
+
+    private final JwtProvider jwtProvider;
+    private final TokenBlacklistService tokenBlacklistService;
+
+    @Override
+    public Mono&lt;Void&gt; filter(ServerWebExchange exchange, WebFilterChain chain) {
+        String token = extractToken(exchange.getRequest());
+
+        if (token == null) {
+            return chain.filter(exchange);
+        }
+
+        return tokenBlacklistService.isBlacklisted(token)
+                .flatMap(isBlacklisted -&gt; {
+                    if (isBlacklisted) {
+                        return chain.filter(exchange);
+                    }
+
+                    try {
+                        jwtProvider.validateToken(token);
+                        Long userId = jwtProvider.getUserId(token);
+
+                        Authentication auth = new UsernamePasswordAuthenticationToken(
+                                userId, null, List.of()
+                        );
+
+                        return chain.filter(exchange)
+                                .contextWrite(ReactiveSecurityContextHolder
+                                        .withAuthentication(auth));
+                    } catch (BusinessException e) {
+                        return chain.filter(exchange);
+                    }
+                });
+    }
+
+    private String extractToken(ServerHttpRequest request) {
+        String bearer = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        if (bearer != null &amp;&amp; bearer.startsWith(&quot;Bearer &quot;)) {
+            return bearer.substring(7);
+        }
+        return null;
+    }
+}
+</code></pre>
+<hr/>
+<h1>DataInitializer</h1>
+<p>테스트 시 매번 수동으로 Redis와 DB를 초기화하는 게 번거롭기 때문에 서버 재시작 시 자동으로 초기화하는 <code>DataInitializer</code>를 만들었다.</p>
+<pre><code class="language-java">@Component
+@RequiredArgsConstructor
+public class DataInitializer implements ApplicationRunner {
+
+    private final CouponRepository couponRepository;
+    private final CouponIssueRepository couponIssueRepository;
+    private final UserRepository userRepository;
+    private final ReactiveRedisTemplate&lt;String, String&gt; reactiveRedisTemplate;
+    private final AppProperties appProperties;
+
+    @Override
+    public void run(ApplicationArguments args) {
+        if (!appProperties.dataInit().enabled()) {
+            log.info(&quot;데이터 초기화 스킵&quot;);
+            return;
+        }
+
+        // coupon_issues 초기화
+        couponIssueRepository.deleteAll().subscribe();
+
+        // Redis refresh 토큰 초기화
+        userRepository.findAll()
+                .flatMap(user -&gt; reactiveRedisTemplate
+                        .delete(&quot;refresh:&quot; + user.getId()))
+                .subscribe();
+
+        // 쿠폰 Redis 재고 초기화
+        couponRepository.findAll()
+                .flatMap(coupon -&gt; reactiveRedisTemplate.opsForValue()
+                        .set(&quot;{coupon:&quot; + coupon.getId() + &quot;}:stock&quot;,
+                                String.valueOf(coupon.getTotalStock()))
+                        .then(reactiveRedisTemplate
+                                .delete(&quot;{coupon:&quot; + coupon.getId() + &quot;}:users&quot;))
+                        .doOnSuccess(r -&gt; log.info(&quot;쿠폰 {} Redis 초기화 완료&quot;,
+                                coupon.getId())))
+                .subscribe();
+    }
+}
+</code></pre>
+<p><code>application.yml</code>에서 활성화 여부를 제어한다.</p>
+<pre><code>app:
+  data-init:
+    enabled: false  # 초기화 필요할 때만 true
+</code></pre>
+<hr/>
+<h1>Next</h1>
+<ul>
+<li>Redis Lua 스크립트로 쿠폰 발급 구현</li>
+<li>Redis Cluster hashtag 설정</li>
+<li>k6 부하 테스트 환경 구성</li>
+</ul></article></div></div>
+  </body>
+</html>

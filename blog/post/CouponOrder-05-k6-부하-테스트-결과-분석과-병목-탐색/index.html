@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Coupon&amp;Order] 05. k6 부하 테스트 결과 분석과 병목 탐색 | Record, Then Build</title>
+    <meta name="description" content="Intro 4편에서 Redis Lua 스크립트로 선착순 쿠폰 발급을 구현하고 k6 부하 테스트 환경을 구성했다. 이번 편에서는 실제 테스트를 돌리면서 마주친 문제들과 결과 분석을 다룬다." />
+    <meta property="og:title" content="[Coupon&amp;Order] 05. k6 부하 테스트 결과 분석과 병목 탐색 | Record, Then Build" />
+    <meta property="og:description" content="Intro 4편에서 Redis Lua 스크립트로 선착순 쿠폰 발급을 구현하고 k6 부하 테스트 환경을 구성했다. 이번 편에서는 실제 테스트를 돌리면서 마주친 문제들과 결과 분석을 다룬다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/CouponOrder-05-k6-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EA%B2%B0%EA%B3%BC-%EB%B6%84%EC%84%9D%EA%B3%BC-%EB%B3%91%EB%AA%A9-%ED%83%90%EC%83%89/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/coupon_order.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/CouponOrder-05-k6-%EB%B6%80%ED%95%98-%ED%85%8C%EC%8A%A4%ED%8A%B8-%EA%B2%B0%EA%B3%BC-%EB%B6%84%EC%84%9D%EA%B3%BC-%EB%B3%91%EB%AA%A9-%ED%83%90%EC%83%89/" />
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BwbR5yaD.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Coupon&amp;Order] 05. k6 부하 테스트 결과 분석과 병목 탐색</h1><p>Lab/Coupon&amp;Order · 2026-04-24</p><h1>Intro</h1>
+<p>4편에서 Redis Lua 스크립트로 선착순 쿠폰 발급을 구현하고 k6 부하 테스트 환경을 구성했다. 이번 편에서는 실제 테스트를 돌리면서 마주친 문제들과 결과 분석을 다룬다.</p>
+<p>숫자만 보면 처음엔 잘못된 것처럼 보인다. 실패율 95%, 타임아웃 발생. 하지만 숫자 뒤에 숨겨진 맥락을 제대로 읽어야 한다. 무엇이 실제 문제고 무엇이 의도된 동작인지 구분하는 과정이 이번 편의 핵심이다.</p>
+<hr/>
+<h1>테스트 전 삽질</h1>
+<h2>__ITER 함정</h2>
+<p>처음에 유저 생성 스크립트를 이렇게 짰다.</p>
+<pre><code>export const options = {
+    vus: 10,
+    iterations: 1000,
+};
+
+export default function () {
+    const username = `user_${__ITER}`;
+    http.post(&#x27;/api/auth/register&#x27;, JSON.stringify({ username, password: &#x27;test1234&#x27; }));
+}
+</code></pre>
+<p>실행하고 보니 이상한 로그가 찍혔다.</p>
+<pre><code>ITER: 45, VU: 7
+ITER: 45, VU: 5
+ITER: 45, VU: 4
+</code></pre>
+<p>__ITER는 전역 카운터가 아니라 VU별 로컬 카운터다. VU가 10개면 각 VU가 독립적으로 0부터 카운팅한다. 그 결과 user_45가 10개 동시에 생성을 시도하고, 중복 에러가 쏟아졌다.</p>
+<p>해결책은 간단하다. vus: 1로 고정하면 된다.</p>
+<pre><code>export const options = {
+    vus: 1,        // 반드시 1
+    iterations: 1000,
+};
+</code></pre>
+<p>vus: 1이면 순차적으로 실행되므로 __ITER가 0부터 999까지 중복 없이 증가한다. 유저 생성처럼 순서가 중요한 작업은 단일 VU로 처리하는 게 맞다.</p>
+<h2>setup() 타임아웃</h2>
+<p>1000명 로그인을 setup()에서 처리했더니 기본 타임아웃 60초를 넘겨버렸다.</p>
+<pre><code>ERRO setup() timed out
+</code></pre>
+<p>setupTimeout을 늘려서 해결했다.</p>
+<pre><code>export const options = {
+    setupTimeout: &#x27;300s&#x27;,
+    ...
+};
+</code></pre>
+<hr/>
+<h1>부하 테스트 결과</h1>
+<pre><code>http_req_duration: avg=873ms  min=35ms  med=819ms  max=60s  p(95)=1.84s
+  { expected_response:true }: avg=114ms  min=96ms  med=103ms  max=557ms  p(95)=126ms
+http_req_failed:   95.94% (24574 / 25613)
+http_reqs:         25613 → 113/s
+vus:               max=500
+running: 3m45s
+</code></pre>
+<hr/>
+<h1>결과 분석</h1>
+<h2>실패율 95.94%의 진실</h2>
+<p>첫눈에 보면 처참한 결과처럼 보인다. 하지만 실패율의 의미를 제대로 읽어야 한다.</p>
+<p>k6의 http_req_failed는 HTTP 상태 코드 기준이다. 4xx, 5xx 응답은 모두 실패로 집계된다. 쿠폰 재고가 100개인데 500명이 계속 요청을 보내면, 100건 발급 후 나머지는 전부 409(재고 소진 또는 중복 발급)를 받는다. 이 409가 전부 실패로 잡힌 것이다.</p>
+<p>실제로 expected_response:true 필터를 보면 이야기가 달라진다.</p>
+<pre><code>{ expected_response:true }: avg=114ms  p(95)=126ms
+</code></pre>
+<p>실제 성공 응답(201)의 평균 응답 시간은 114ms다. 서버가 처리한 요청만 보면 충분히 빠른 수준이다.</p>
+<p>그리고 가장 중요한 결과, coupon_issues 테이블을 확인했을 때 정확히 100건만 들어있었다. 중복 발급 없음, 재고 초과 없음. Redis Lua 스크립트의 원자적 처리가 완벽하게 동작했다.</p>
+<h2>max 60s 타임아웃은 진짜 문제</h2>
+<p>실패율과 달리 max: 60s는 진짜 문제 신호다. 일부 요청이 60초 타임아웃까지 응답을 받지 못했다는 뜻이다.</p>
+<p>원인을 추적하면 이렇다. 재고가 100개뿐이라 100건 처리 후 나머지는 모두 Redis에서 즉시 튕겨내는 구조다. DB write까지 이어지는 요청이 극히 적으니 DB 병목은 아니다. 타임아웃의 원인은 VU가 급격히 늘어나는 구간에서 연결 자체가 지연된 것으로 보인다.</p>
+<hr/>
+<h1>이번 테스트의 근본적 한계</h1>
+<p>솔직히 말하면 이번 테스트는 진짜 부하 테스트가 아니었다.</p>
+<p>재고 100개짜리 쿠폰에 500명이 달려드는 구조는, 100건 처리 후 나머지는 전부 Redis에서 즉시 거절된다. 서버 입장에서는 오히려 부하가 거의 없는 상황이다. DB write 병목, 커넥션 풀 고갈, R2DBC 한계 같은 진짜 병목을 확인하려면 재고를 충분히 늘려야 한다.</p>
+<p>재고를 100만 개로 늘리면 어떻게 될까. 1000명이 계속 요청을 보내면서 DB write가 계속 발생하고, 그 시점에서 진짜 병목이 드러날 것이다.</p>
+<p>이 실험은 다음 시리즈인 주문 API에서 본격적으로 진행할 예정이다. 재고 처리 방식을 네 가지(Redis Lua, DB 낙관적 락, DB 비관적 락, Kafka)로 구현하고 각각 부하 테스트를 돌려 비교한다.</p>
+<hr/>
+<h1>테스트 환경에 대한 고민</h1>
+<p>로컬 맥북에서 스프링을 띄우고 k6를 돌리는 방식은 완벽하지 않다. 맥북에서 돌아가는 다른 프로세스들이 변수로 작용하고, 네트워크 레이턴시도 실제 환경과 다르다.</p>
+<p>이상적인 테스트 환경은 이렇다.</p>
+<pre><code>서버 1 → 스프링 (단독)
+서버 2 → k6 (단독)
+서버 3 → MySQL, Redis, Grafana, Prometheus
+</code></pre>
+<p>실무에서는 이런 전용 스테이징 환경을 따로 두고 운영 환경과 동일한 스펙으로 구성한다.</p>
+<p>필자는 현재 개인 서버가 있다. Kubernetes로 구성이 되어있는데, 여기를 메인으로하고, oci에서 생성된 무료인스턴스를 이용해 그 위에서 본격적인 부하 테스트를 진행할 계획이다.</p>
+<p>환경의 한계를 숨기지 않고 명시하는 것도 중요하다. &quot;로컬 환경 기준&quot;임을 밝히고, 나중에 실제 서버 환경에서 비교 테스트를 진행하는 것이 더 신뢰성 있는 결과를 만들어낼 것으로 생각된다.</p>
+<hr/>
+<h1>쿠폰 시리즈를 마치며</h1>
+<p>이번 시리즈에서 다룬 것들을 정리하면 이렇다.</p>
+<p><strong>설계 단계에서 정한 것들</strong></p>
+<p>WebFlux를 선택한 이유는 단순히 &quot;성능이 좋아서&quot;가 아니다. 선착순 쿠폰 발급처럼 동시 요청이 많고 I/O 대기가 핵심인 구조에서 Non-blocking이 유의미하다고 판단했기 때문이다. DB도 같은 이유로 JPA 대신 R2DBC를 선택했다.</p>
+<p><strong>구현 과정에서 배운 것들</strong></p>
+<p>Redis Cluster에서 Lua 스크립트를 쓸 때 hashtag가 필요하다는 것, Flyway가 R2DBC 환경에서 자동으로 동작하지 않는다는 것, k6의 __ITER가 VU별 로컬 카운터라는 것. 문서만 봐서는 모르는 것들이 직접 부딪히면서 나왔다.</p>
+<p><strong>아직 확인하지 못한 것들</strong></p>
+<p>진짜 부하에서 R2DBC 커넥션 풀이 어떻게 버티는지, DB write 병목이 어느 지점에서 드러나는지, Grafana로 봤을 때 실제 병목이 어디에 있는지. 이건 다음 시리즈에서 확인한다.</p>
+<hr/>
+<h1>Next Series</h1>
+<ul>
+<li>주문 API 구현</li>
+<li>재고 처리 방식 4가지 비교 (Redis Lua / DB 낙관적 락 / DB 비관적 락 / Kafka)</li>
+<li>Grafana + Prometheus 모니터링 연동</li>
+<li>본격적인 부하 테스트와 병목 분석</li>
+</ul></article></div></div>
+  </body>
+</html>
