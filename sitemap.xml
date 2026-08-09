@@ -289,6 +289,12 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-17-Saga-Kafka-%ED%86%B5%ED%95%A9-%ED%85%8C%EC%8A%A4%ED%8A%B8</loc>
+    <lastmod>2026-08-10</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/post/TestContainers-%EC%9E%AC%EC%82%AC%EC%9A%A9-%ED%8C%A8%ED%84%B4-%EB%B9%84%EA%B5%90</loc>
     <lastmod>2026-07-12</lastmod>
     <changefreq>monthly</changefreq>
