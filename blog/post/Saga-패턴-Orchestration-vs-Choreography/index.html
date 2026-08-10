@@ -31,7 +31,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-Bse_OIbU.js"></script>
+    <script type="module" crossorigin src="/assets/index-CNSgvQcV.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
   </head>
   <body>
@@ -80,7 +80,7 @@ public class OrderSagaOrchestrator {
     }
 }
 </code></pre>
-<p>전체 흐름이 <code>OrderSagaOrchestrator</code> 클래스 하나에 순서대로 다 적혀 있다. 그래서 지금 이 작업이 어느 단계까지 왔는지, 실패하면 어떤 순서로 보상해야 하는지를 이 한 곳만 보면 파악할 수 있다. 각 서비스(A, B, C)는 자기가 전체 흐름의 몇 번째 단계인지 몰라도 된다. 그냥 지휘자가 시키는 대로 실행하고 결과만 돌려주면 끝이다.</p>
+<p>전체 흐름이 OrderSagaOrchestrator 클래스 하나에 순서대로 다 적혀 있다. 그래서 지금 이 작업이 어느 단계까지 왔는지, 실패하면 어떤 순서로 보상해야 하는지를 이 한 곳만 보면 파악할 수 있다. 각 서비스(A, B, C)는 자기가 전체 흐름의 몇 번째 단계인지 몰라도 된다. 그냥 지휘자가 시키는 대로 실행하고 결과만 돌려주면 끝이다.</p>
 <hr/>
 <h1>Choreography</h1>
 <p>Choreography는 중앙 지휘자가 없다. 각 서비스가 자기 일을 끝내면 나 끝났다는 이벤트를 발행하고, 다음 단계를 담당하는 서비스가 그 이벤트를 구독해서 알아서 반응한다.</p>
