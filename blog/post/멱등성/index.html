@@ -7,13 +7,13 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>idempotence | Record, Then Build</title>
+    <title>멱등성 | Record, Then Build</title>
     <meta name="description" content="Intro 메시지를 처리하다 보면, 분명 한 번만 보낸 것 같은데 같은 메시지가 또 오는 경우가 있다. 처음엔 어디서 잘못 보낸 거 아닌가? 싶었는데, 알고 보니 이건 시스템이 잘못 동작한 게 아니라 애초에 그렇게 설계되는 경우가 많" />
-    <meta property="og:title" content="idempotence | Record, Then Build" />
+    <meta property="og:title" content="멱등성 | Record, Then Build" />
     <meta property="og:description" content="Intro 메시지를 처리하다 보면, 분명 한 번만 보낸 것 같은데 같은 메시지가 또 오는 경우가 있다. 처음엔 어디서 잘못 보낸 거 아닌가? 싶었는데, 알고 보니 이건 시스템이 잘못 동작한 게 아니라 애초에 그렇게 설계되는 경우가 많" />
     <meta property="og:type" content="article" />
-    <meta property="og:url" content="https://junseokhub.github.io/blog/post/idempotence/" />
-    <link rel="canonical" href="https://junseokhub.github.io/blog/post/idempotence/" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EB%A9%B1%EB%93%B1%EC%84%B1/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EB%A9%B1%EB%93%B1%EC%84%B1/" />
     <style>
       /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
       #root > .prerender-content { display: none; }
@@ -31,11 +31,11 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-DaDiEA5O.js"></script>
+    <script type="module" crossorigin src="/assets/index-C3T3cYmX.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
   </head>
   <body>
-    <div id="root"><div class="prerender-content"><article><h1>idempotence</h1><p>Computer Science · 2026-07-04</p><h1>Intro</h1>
+    <div id="root"><div class="prerender-content"><article><h1>멱등성</h1><p>Computer Science · 2026-07-04</p><h1>Intro</h1>
 <p>메시지를 처리하다 보면, 분명 한 번만 보낸 것 같은데 같은 메시지가 또 오는 경우가 있다. 처음엔 어디서 잘못 보낸 거 아닌가? 싶었는데, 알고 보니 이건 시스템이 잘못 동작한 게 아니라 애초에 그렇게 설계되는 경우가 많다는 걸 알게 됐다.</p>
 <p>문제는 이걸 안다고 끝나는 게 아니라는 거다. 같은 메시지가 두 번 왔을 때 처리하는 쪽에서 똑같은 일을 두 번 해버리면, 그게 바로 데이터 오류로 이어진다. 특히 적립이나 차감처럼 누적되는 연산일수록 두 번 실행됐을 때 피해가 크다. 그래서 <strong>같은 메시지가 와도 두 번 처리한 것처럼 되면 안 된다</strong>는 걸 어떻게 만들어야 하는지 알아보려고 한다.</p>
 <p>우선 왜 같은 메시지가 두 번 오는지부터 감을 잡고, 그 다음에 실제로 어떻게 막을 수 있는지(자연키 제약, catch로 넘기기, 멱등한 연산, 버전 번호, Inbox)를 하나씩 알아보자.</p>

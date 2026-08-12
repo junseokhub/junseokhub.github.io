@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>메시징 패턴 비교 (Redis Pub/Sub, Redis Streams, RabbitMQ, Kafka) | Record, Then Build</title>
+    <meta name="description" content="Intro 서비스 간에 이벤트를 주고받아야 하는 상황이 생겼을 때, 메시징 하면 Kafka고 무조건 Kafka부터 떠올렸다. 근데 찾아볼수록 이 자리에 후보가 하나가 아니었다. 이미 쓰고 있던 Redis에도 Pub/Sub과 Strea" />
+    <meta property="og:title" content="메시징 패턴 비교 (Redis Pub/Sub, Redis Streams, RabbitMQ, Kafka) | Record, Then Build" />
+    <meta property="og:description" content="Intro 서비스 간에 이벤트를 주고받아야 하는 상황이 생겼을 때, 메시징 하면 Kafka고 무조건 Kafka부터 떠올렸다. 근데 찾아볼수록 이 자리에 후보가 하나가 아니었다. 이미 쓰고 있던 Redis에도 Pub/Sub과 Strea" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EB%A9%94%EC%8B%9C%EC%A7%95-%ED%8C%A8%ED%84%B4-%EB%B9%84%EA%B5%90-Redis-PubSub-Redis-Streams-RabbitMQ-Kafka/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EB%A9%94%EC%8B%9C%EC%A7%95-%ED%8C%A8%ED%84%B4-%EB%B9%84%EA%B5%90-Redis-PubSub-Redis-Streams-RabbitMQ-Kafka/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-C3T3cYmX.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>메시징 패턴 비교 (Redis Pub/Sub, Redis Streams, RabbitMQ, Kafka)</h1><p>Devops · 2026-08-12</p><h1>Intro</h1>
+<p>서비스 간에 이벤트를 주고받아야 하는 상황이 생겼을 때, 메시징 하면 Kafka고 무조건 Kafka부터 떠올렸다. 근데 찾아볼수록 이 자리에 후보가 하나가 아니었다. 이미 쓰고 있던 Redis에도 Pub/Sub과 Streams가 있었고, 큐 기반의 대표주자인 RabbitMQ도 실무에서 Kafka만큼이나 자주 비교되는 이름이었다.</p>
+<p>그래서 이 넷을 비교해보고, 뭐가 다르고 언제 뭘 골라야 하는지 정리해보려고 한다.</p>
+<hr/>
+<h1>로그로 쌓나? 큐에 넣나?</h1>
+<p>넷을 하나씩 보기 전에, 이걸 가르는 제일 큰 기준부터 잡고 가는 게 좋을 것 같다. 메시지가 브로커 안에서 로그처럼 순서대로 계속 쌓이는지, 아니면 큐처럼 한 번 꺼내지면 사라지는지가 근본적으로 다르다.</p>
+<pre><code class="language-bash">[로그 방식 - Kafka, Redis Streams]
+발행 -&gt; 로그에 순서대로 계속 쌓임 -&gt; 컨슈머가 원하는 위치부터 읽음 (여러 번 읽기 가능)
+
+[큐 방식 - RabbitMQ]
+발행 -&gt; 큐에 들어감 -&gt; 컨슈머 하나가 꺼내서 처리 -&gt; ack 하면 큐에서 제거 (한 번 처리되면 끝)
+</code></pre>
+<p>이 하나의 차이에서 메시지를 여러 소비자가 각자 다시 읽을 수 있는지, 메시지가 몇 번이나 재처리될 수 있는지 같은 나머지 특성들이 갈라진다.</p>
+<hr/>
+<h1>Redis Pub/Sub</h1>
+<p>Redis Pub/Sub는 구독자가 채널을 구독하고 있는 그 순간에만 메시지를 받을 수 있다. 로그도 큐도 아니고, 아예 저장을 안 한다.</p>
+<pre><code class="language-java">redisTemplate.convertAndSend(&quot;notifications&quot;, payload);   // 발행
+</code></pre>
+<pre><code class="language-bash">[발행자] &quot;메시지 발행!&quot; -&gt; 채널
+                            ㄴ&gt; 구독자 A (듣고 있음) -&gt; 받음
+                            ㄴ&gt; 구독자 B (아직 연결 안 함) -&gt; 못 받음, 영영 유실
+</code></pre>
+<p>구독자가 연결되기 전, 혹은 잠깐 끊긴 사이에 발행된 메시지는 그냥 사라진다. 재전송도, 다시 읽기도 안 된다.</p>
+<hr/>
+<h1>Redis Streams</h1>
+<p>Redis Pub/Sub의 저장을 안 하는 한계를 메우려고 나온 게 Redis Streams다. 메시지를 스트림(로그와 비슷한 구조)에 쌓아두고, 컨슈머 그룹 단위로 어디까지 읽었는지를 관리한다. Kafka의 컨슈머 그룹,오프셋 개념과 꽤 비슷하다.</p>
+<pre><code class="language-java">// 발행
+redisTemplate.opsForStream().add(&quot;notifications&quot;, payload);
+</code></pre>
+<pre><code class="language-java">// 컨슈머 그룹으로 구독 , 처리 후 ack 필요
+StreamOffset&lt;String&gt; offset = StreamOffset.create(&quot;notifications&quot;, ReadOffset.lastConsumed());
+List&lt;MapRecord&lt;String, Object, Object&gt;&gt; records =
+        redisTemplate.opsForStream().read(Consumer.from(&quot;group1&quot;, &quot;consumer1&quot;), offset);
+</code></pre>
+<p>Pub/Sub와 다르게 컨슈머가 늦게 접속해도 못 읽은 메시지를 이어서 읽을 수 있고, 처리 후 명시적으로 ack해야 그 메시지가 처리된 걸로 인정된다. Kafka와 비슷한 안정성을 이미 Redis를 쓰고 있는 환경에서 추가 인프라 없이 얻을 수 있다는 게 장점이다. 다만 Kafka만큼 파티셔닝이나 대규모 처리량에 최적화돼 있진 않고, 보관 기간이나 스트림 크기 관리도 Kafka보다는 손이 더 간다고 한다.</p>
+<hr/>
+<h1>RabbitMQ</h1>
+<p>RabbitMQ는 대표적인 큐 기반 브로커다. 메시지를 큐에 넣으면, 컨슈머가 그걸 꺼내가서 처리하고 ack를 보내야 큐에서 완전히 제거된다.</p>
+<pre><code class="language-java">// 발행
+rabbitTemplate.convertAndSend(&quot;notifications.queue&quot;, payload);
+</code></pre>
+<pre><code class="language-java">// 구독 - 처리 후 자동/수동 ack
+@RabbitListener(queues = &quot;notifications.queue&quot;)
+public void listen(String payload) {
+    // 처리 완료 시 ack, 실패하면 재시도 큐나 DLQ로
+}
+</code></pre>
+<pre><code class="language-bash">[발행자] -&gt; 큐 -&gt; 컨슈머 A가 꺼내서 처리 -&gt; ack -&gt; 큐에서 제거 (끝)
+</code></pre>
+<p>큐 방식이다 보니 여러 컨슈머가 있으면 일을 나눠서 처리하는게 자연스럽다. 컨슈머를 늘리면 그만큼 처리량이 분산된다(work queue 패턴). 그리고 라우팅이 꽤 유연하다.
+메시지를 어떤 큐로 보낼지 조건에 따라 세밀하게 정할 수 있는 exchange 개념이 있어서, 복잡한 라우팅 규칙이 필요한 경우에 강점이 있다. 다만 큐 방식이라 한 번 소비되고 ack되면 그 메시지는 사라진다.
+Kafka처럼 나중에 다른 컨슈머 그룹이 처음부터 다시 읽는게 기본적으로는 안 된다(별도로 exchange를 여러 큐에 물려서 각자 사본을 받게 하는 식으로 우회는 가능하다). 그리고 처리량 자체는 파티션 기반으로 수평 확장하는 Kafka보다 대체로 낮다고 알려져 있다.</p>
+<hr/>
+<h1>Kafka</h1>
+<p>Kafka는 메시지를 토픽(로그)에 순서대로 쌓아두고, 컨슈머(그룹)가 각자 원하는 위치부터 읽어간다.</p>
+<pre><code class="language-java">kafkaTemplate.send(&quot;notifications&quot;, key, payload);   // 발행
+</code></pre>
+<pre><code class="language-java">@KafkaListener(topics = &quot;notifications&quot;, groupId = &quot;notification-service&quot;)
+public void listen(String payload) {
+    // 이 컨슈머 그룹이 아직 안 읽었으면 나중에라도 읽는다
+}
+</code></pre>
+<pre><code class="language-bash">[발행자] -&gt; 토픽에 순서대로 저장 (계속 쌓임)
+              컨슈머 그룹 A: 지금 바로 읽음
+              컨슈머 그룹 B: 3시간 뒤에 접속해도, 처음부터 또는 안 읽은 부분부터 읽을 수 있음
+</code></pre>
+<p>컨슈머 그룹이 여러 개면 각 그룹이 독립적으로 전체 로그를 다 받을 수 있다(RabbitMQ의 큐와 달리, 한 그룹이 읽었다고 다른 그룹이 못 읽는 게 아니다).
+그리고 파티션 단위로 처리량을 수평 확장하기 좋게 설계돼 있어서, 대용량 이벤트 스트림을 다루는 데 강하다. 대신 이 안정성과 확장성을 위해 브로커 자체를 별도로 운영해야 하고, 파티션, 컨슈머 그룹, 오프셋 같은 개념도 따로 다뤄야 해서 넷 중 운영 난이도가 제일 높다.</p>
+<hr/>
+<h1>그래서 뭐가 다를데?</h1>
+<ul>
+<li>저장 여부
+<ul>
+<li>Pub/Sub만 저장을 안 한다. 나머지 셋(Streams, RabbitMQ, Kafka)은 다 저장한다</li>
+</ul>
+</li>
+<li>저장 방식
+<ul>
+<li>Streams와 Kafka는 로그(여러 컨슈머가 각자 다시 읽을 수 있음), RabbitMQ는 큐(한 번 소비되면 사라짐)</li>
+</ul>
+</li>
+<li>인프라 무게
+<ul>
+<li>Pub/Sub, Streams는 이미 Redis를 쓰고 있다면 추가 비용이 거의 없다. RabbitMQ, Kafka는 별도 브로커를 운영해야 한다</li>
+</ul>
+</li>
+<li>강점 포인트
+<ul>
+<li>RabbitMQ는 유연한 라우팅과 work queue 패턴, Kafka는 대용량 처리량과 여러 그룹의 독립적인 재구독</li>
+</ul>
+</li>
+</ul>
+<hr/>
+<h1>그래서 언제 뭘 쓸까?</h1>
+<ul>
+<li>놓쳐도 큰 문제가 없는 가벼운 실시간 알림이고, 이미 Redis를 쓰고 있다면? -&gt;  Redis Pub/Sub</li>
+<li>놓치면 안 되는데, 새로운 인프라를 늘리고 싶지 않다면? -&gt; Redis Streams로 절충</li>
+<li>여러 워커에게 일을 골고루 나눠 처리해야 하고, 라우팅 규칙이 복잡하다면? -&gt; RabbitMQ</li>
+<li>여러 서비스가 각자 독립적으로 같은 이벤트 스트림을 구독해야 하고, 처리량이 크다면? -&gt; Kafka</li>
+</ul>
+<pre><code class="language-bash">메시지를 놓쳐도 괜찮은가?
+  -&gt; 예 (이미 Redis를 쓰고 있다면) -&gt; Redis Pub/Sub
+  -&gt; 아니오
+       -&gt; 새 인프라 없이 절충하고 싶다 -&gt; Redis Streams
+       -&gt; 일을 나눠서 처리(work queue)하거나 라우팅이 복잡하다 -&gt; RabbitMQ
+       -&gt; 여러 그룹이 독립적으로 재구독 + 대용량 -&gt; Kafka
+</code></pre>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>가장 큰 기준은 로그(여러 번 읽기 가능)인가, 큐(한 번 소비되면 끝)인지이다.</li>
+<li>Redis Pub/Sub는 아예 저장을 안 해서 그 순간 듣는 사람만 받는다.</li>
+<li>Redis Streams는 Pub/Sub에 저장·컨슈머 그룹 개념을 더해 유실 문제를 보완한, Kafka와 절충안에 가까운 선택지다.</li>
+<li>RabbitMQ는 큐 기반이라 일을 나눠 처리하는 데 강하고 라우팅이 유연하지만, 소비된 메시지는 기본적으로 사라진다.</li>
+<li>Kafka는 로그 기반이라 여러 컨슈머 그룹이 독립적으로 재구독할 수 있고 대용량 처리에 강하지만, 운영 난이도가 제일 높다.</li>
+</ul>
+<p>메시징이면 그냥 Kafka다!!는 너무 성급한 결론이었던 것 같다. 이미 Redis가 있다면 Streams로 충분한 경우가 많고, 일을 나눠 처리하는 게 핵심이라면 오히려 RabbitMQ가 더 잘 맞는 경우도 있다. 저장 여부와 로그/큐 중 뭐가 필요한지부터 따져보는 게 먼저인 것 같다.</p></article></div></div>
+  </body>
+</html>
