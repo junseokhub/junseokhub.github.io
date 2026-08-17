@@ -8,9 +8,9 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Architecture | Record, Then Build</title>
-    <meta name="description" content="Architecture 카테고리의 글 4개" />
+    <meta name="description" content="Architecture 카테고리의 글 5개" />
     <meta property="og:title" content="Architecture | Record, Then Build" />
-    <meta property="og:description" content="Architecture 카테고리의 글 4개" />
+    <meta property="og:description" content="Architecture 카테고리의 글 5개" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://junseokhub.github.io/blog/category/Architecture/" />
     <link rel="canonical" href="https://junseokhub.github.io/blog/category/Architecture/" />
@@ -31,10 +31,10 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-Cz0YP0yd.js"></script>
+    <script type="module" crossorigin src="/assets/index-BQEAWIii.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
   </head>
   <body>
-    <div id="root"><div class="prerender-content"><h1>Architecture</h1><p>글 4개</p><ul><li><a href="/blog/post/Saga-%ED%8C%A8%ED%84%B4-Orchestration-vs-Choreography/">Saga 패턴 (Orchestration vs Choreography)</a><p>Intro 여러 서비스에 걸친 하나의 작업을 처리해야 하는데, 각 서비스가 자기 DB를 따로 갖고 있으면 전체를 하나로 묶는 트랜잭션이 없다. 서비스 A는 성공했는데 서비스 C에서 실패하면, A와 B를 되돌릴 방법이 마땅치 않다. 이</p></li><li><a href="/blog/post/%ED%97%A5%EC%82%AC%EA%B3%A0%EB%82%A0-%EC%95%84%ED%82%A4%ED%85%8D%EC%B2%98%EC%99%80-DDD/">헥사고날 아키텍처와 DDD</a><p>Intro 포트와 어댑터, 도메인 로직은 순수하게 유지해야해와 같은 말은 여기저기서 많이 들어봤다. 근데 막상 그래서 패키지는 어떻게 나누고, 클래스는 어떤 이름으로 뭘 넣어야 하는데? 라고 물으면 대답이 애매했다. 이론은 그럴듯한데</p></li><li><a href="/blog/post/%EB%A9%94%EC%8B%9C%EC%A7%80-%EC%9E%AC%EC%8B%9C%EB%8F%84-%EC%A0%84%EB%9E%B5/">메시지 재시도 전략</a><p>Intro 메시지를 처리하다 보면 실패가 일어나기도한다. 잠깐 네트워크가 끊긴다거나, 받는 쪽이 잠깐 느려졌거나, 외부 시스템이 순간적으로 응답을 안주거나...등등</p></li><li><a href="/blog/post/Outbox-vs-CDC-vs-Saga/">Outbox vs CDC vs Saga</a><p>Outbox vs CDC vs Saga 분산 시스템에서 DB에 쓰면서 그 변경을 메시지로도 내보내야 하는 상황은 끝없이 나온다. 이걸 푸는 길로 Outbox, CDC, Saga가 자주 같이 거론된다. </p></li></ul></div></div>
+    <div id="root"><div class="prerender-content"><h1>Architecture</h1><p>글 5개</p><ul><li><a href="/blog/post/%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98-Compensating-Transaction/">보상 트랜잭션 (Compensating Transaction)</a><p>Intro 여러 서비스에 걸친 작업 중 하나가 실패했을 때, 처음엔 이미 커밋된 앞 단계를 그냥 롤백하면 되지 않나 싶었다. 근데 이미 다른 서비스의 DB에 커밋까지 끝난 데이터를, 진짜 트랜잭션 롤백처럼 아무 일 없었던 걸로 되돌릴</p></li><li><a href="/blog/post/Saga-%ED%8C%A8%ED%84%B4-Orchestration-vs-Choreography/">Saga 패턴 (Orchestration vs Choreography)</a><p>Intro 여러 서비스에 걸친 하나의 작업을 처리해야 하는데, 각 서비스가 자기 DB를 따로 갖고 있으면 전체를 하나로 묶는 트랜잭션이 없다. 서비스 A는 성공했는데 서비스 C에서 실패하면, A와 B를 되돌릴 방법이 마땅치 않다. 이</p></li><li><a href="/blog/post/%ED%97%A5%EC%82%AC%EA%B3%A0%EB%82%A0-%EC%95%84%ED%82%A4%ED%85%8D%EC%B2%98%EC%99%80-DDD/">헥사고날 아키텍처와 DDD</a><p>Intro 포트와 어댑터, 도메인 로직은 순수하게 유지해야해와 같은 말은 여기저기서 많이 들어봤다. 근데 막상 그래서 패키지는 어떻게 나누고, 클래스는 어떤 이름으로 뭘 넣어야 하는데? 라고 물으면 대답이 애매했다. 이론은 그럴듯한데</p></li><li><a href="/blog/post/%EB%A9%94%EC%8B%9C%EC%A7%80-%EC%9E%AC%EC%8B%9C%EB%8F%84-%EC%A0%84%EB%9E%B5/">메시지 재시도 전략</a><p>Intro 메시지를 처리하다 보면 실패가 일어나기도한다. 잠깐 네트워크가 끊긴다거나, 받는 쪽이 잠깐 느려졌거나, 외부 시스템이 순간적으로 응답을 안주거나...등등</p></li><li><a href="/blog/post/Outbox-vs-CDC-vs-Saga/">Outbox vs CDC vs Saga</a><p>Outbox vs CDC vs Saga 분산 시스템에서 DB에 쓰면서 그 변경을 메시지로도 내보내야 하는 상황은 끝없이 나온다. 이걸 푸는 길로 Outbox, CDC, Saga가 자주 같이 거론된다. </p></li></ul></div></div>
   </body>
 </html>

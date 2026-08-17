@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>보상 트랜잭션 (Compensating Transaction) | Record, Then Build</title>
+    <meta name="description" content="Intro 여러 서비스에 걸친 작업 중 하나가 실패했을 때, 처음엔 이미 커밋된 앞 단계를 그냥 롤백하면 되지 않나 싶었다. 근데 이미 다른 서비스의 DB에 커밋까지 끝난 데이터를, 진짜 트랜잭션 롤백처럼 아무 일 없었던 걸로 되돌릴" />
+    <meta property="og:title" content="보상 트랜잭션 (Compensating Transaction) | Record, Then Build" />
+    <meta property="og:description" content="Intro 여러 서비스에 걸친 작업 중 하나가 실패했을 때, 처음엔 이미 커밋된 앞 단계를 그냥 롤백하면 되지 않나 싶었다. 근데 이미 다른 서비스의 DB에 커밋까지 끝난 데이터를, 진짜 트랜잭션 롤백처럼 아무 일 없었던 걸로 되돌릴" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98-Compensating-Transaction/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EB%B3%B4%EC%83%81-%ED%8A%B8%EB%9E%9C%EC%9E%AD%EC%85%98-Compensating-Transaction/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BQEAWIii.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>보상 트랜잭션 (Compensating Transaction)</h1><p>Architecture · 2026-08-17</p><h1>Intro</h1>
+<p>여러 서비스에 걸친 작업 중 하나가 실패했을 때, 처음엔 이미 커밋된 앞 단계를 그냥 롤백하면 되지 않나 싶었다. 근데 이미 다른 서비스의 DB에 커밋까지 끝난 데이터를, 진짜 트랜잭션 롤백처럼 아무 일 없었던 걸로 되돌릴 방법은 없었다. 대신 반대되는 작업을 새로 실행해서 원래 상태와 비슷하게 되돌리는 방식을 써야 했는데, 이게 생각보다 신경 쓸 게 많았다.</p>
+<p>보상 트랜잭션이 왜 진짜 롤백이 아닌지, 설계할 때 뭘 조심해야 하는지 정리해보려고 한다.</p>
+<hr/>
+<h1>왜 롤백이 아니라 보상?</h1>
+<p>한 DB 안에서의 트랜잭션 롤백은 커밋되지 않은 변경을 통째로 무효화한다. 마치 그 작업이 처음부터 없었던 것처럼 된다. 근데 여러 서비스에 걸친 작업에서 어떤 단계가 이미 커밋까지 끝났다면, 그 이후에 되돌리는 건 롤백이 아니라 새로운 작업을 하나 더 실행해서 앞의 효과를 상쇄하는 것이다. 이게 보상 트랜잭션이다.</p>
+<pre><code class="language-bash">[DB 롤백]        커밋 전 상태로 되돌림 -&gt; 마치 없었던 일처럼
+[보상 트랜잭션]   이미 커밋됨 -&gt; 반대 작업을 새로 실행 -&gt; 효과를 상쇄 (완전히 없었던 일이 되는 건 아님)
+</code></pre>
+<p>이 차이가 왜 중요하냐면, 보상은 완벽한 되돌리기를 보장 못 한다는 걸 전제로 설계해야 하기 때문이다.</p>
+<hr/>
+<h1>진짜로 되돌릴 수 없는 것들이 있다</h1>
+<p>재고를 다시 채워 넣거나, 예약을 취소하는 것처럼 데이터 상태를 되돌리는 건 비교적 수월하다. 문제는 이미 바깥세상에 영향을 준 부수효과다.</p>
+<pre><code class="language-java">// 정방향: 알림 발송
+@KafkaListener(topics = &quot;order-confirmed&quot;)
+public void onOrderConfirmed(OrderConfirmedEvent event) {
+    notificationService.sendConfirmationEmail(event.userId());
+}
+</code></pre>
+<p>이미 발송된 이메일은 되돌릴 방법이 없다. 이럴 땐 정확히 되돌리는 대신, 정정 알림을 새로 보내는 것으로 의미상 상쇄한다.</p>
+<pre><code class="language-java">// 보상: 이미 보낸 이메일은 못 되돌리니, 정정 알림을 새로 보낸다
+@KafkaListener(topics = &quot;order-cancelled-after-confirmation&quot;)
+public void onOrderCancelledAfterConfirmation(OrderCancelledEvent event) {
+    notificationService.sendCancellationEmail(event.userId());  // 취소됐다는 걸 알림
+}
+</code></pre>
+<p>보상 트랜잭션을 설계할 때는 &quot;이 단계는 데이터만 되돌리면 되는가, 아니면 이미 밖으로 나간 효과가 있어서 정정으로 처리해야 하는가&quot;를 각 단계마다 따져봐야 하는 것 같다.</p>
+<hr/>
+<h1>보상도 실패할 수 있다</h1>
+<p>보상 트랜잭션도 결국 하나의 작업이라, 이것 역시 실패할 수 있다. 재고를 되돌리려고 했는데 그 순간 DB 커넥션이 끊기거나, 외부 시스템 호출이 타임아웃 날 수도 있다.</p>
+<pre><code class="language-bash">정방향: A 커밋 -&gt; B 커밋 -&gt; C 실패
+보상:   B 보상 시도 -&gt; 실패! -&gt; 이제 어떻게 하지?
+</code></pre>
+<p>이럴 때를 대비해서 보상 자체에도 재시도가 필요하고, 재시도가 있는 이상 보상 로직 자체도 멱등해야 한다 — 같은 보상이 두 번 실행돼도 결과가 똑같아야 한다는 뜻이다.</p>
+<pre><code class="language-java">@Transactional
+public void compensateInventoryReservation(String reservationId) {
+    Reservation reservation = reservationRepository.findById(reservationId).orElseThrow();
+    if (reservation.getStatus() == ReservationStatus.RELEASED) {
+        return;   // 이미 보상 처리됐으면 그냥 넘어간다 - 멱등하게
+    }
+    reservation.release();
+}
+</code></pre>
+<p>그리고 재시도를 다 해봐도 보상이 끝내 실패하는 경우도 대비해야 한다. 이땐 자동으로 해결하려 하지 말고, 사람이 개입해야 하는 상황으로 넘기는 게 맞는 것 같다.
+실패한 보상을 별도로 기록해두고 알림을 보내서, 운영자가 수동으로 처리하게 하는 안전망이 필요하다.</p>
+<hr/>
+<h1>완료된 단계만, 거꾸로의 순서</h1>
+<p>보상은 실패한 단계 자체를 보상하는 게 아니다. 실패한 단계는 애초에 커밋된 게 없으니 되돌릴 것도 없다. 보상 대상은 그 이전에 이미 성공적으로 끝난 단계들이고, 이걸 진행됐던 순서의 역순으로 되돌린다.</p>
+<pre><code class="language-bash">정방향:  A 커밋 -&gt; B 커밋 -&gt; C 실패 (커밋된 거 없음, 보상 대상 아님)
+보상:    B 보상 -&gt; A 보상   (역순)
+</code></pre>
+<p>역순으로 되돌리는 이유는, 뒤 단계가 앞 단계의 결과에 의존하고 있을 수 있어서다. A를 먼저 되돌려버리면, 아직 안 되돌린 B가 이미 없어진 A의 데이터를 참조하려다가 오류가 날 수 있다.</p>
+<hr/>
+<h1>그 사이에 남에게 보이는 중간 상태</h1>
+<p>보상이 끝날 때까지는 어느 정도 시간이 걸린다. 그 사이에 다른 요청이 끼어들어서, 아직 보상이 안 끝난 애매한 상태를 그대로 보게 될 수 있다. 예를 들어 재고가 예약됨 상태인 채로 몇 초간 떠 있다가 뒤늦게 예약 해제됨으로 바뀌는 그 틈에, 다른 사용자가 예약됨 상태만 보고 그 재고를 못 쓴다고 판단해버릴 수 있다.</p>
+<p>이걸 막으려면 각 단계의 상태를 명확한 값으로 표현해두는 게 도움이 된다. 단순히 예약됨/안 됨이 아니라 예약 확정, 예약 보상 진행 중처럼 중간 상태를 구분해서 노출하면, 그 상태를 보는 다른 로직이 이건 아직 확정된 게 아니구나라고 판단할 수 있는 여지가 생긴다.</p>
+<pre><code class="language-java">public enum ReservationStatus {
+    RESERVED,       // 정상 예약
+    COMPENSATING,   // 보상 진행 중 - 아직 완전히 안 끝남
+    RELEASED        // 보상 완료
+}
+</code></pre>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>보상 트랜잭션은 롤백이 아니다.
+<ul>
+<li>이미 커밋된 걸 없었던 일로 만드는 게 아니라, 반대 작업을 새로 실행해서 효과를 상쇄하는 것이다</li>
+</ul>
+</li>
+<li>이미 바깥으로 나간 부수효과(발송된 알림 등)는 되돌릴 수 없다.
+<ul>
+<li>정정하는 작업으로 의미상 상쇄해야 한다.</li>
+</ul>
+</li>
+<li>보상도 실패할 수 있다.
+<ul>
+<li>재시도가 필요하고, 재시도가 있는 이상 보상 로직도 멱등해야 한다. 그래도 안 되면 사람이 개입할 수 있는 안전망이 필요하다.</li>
+</ul>
+</li>
+<li>보상은 실패한 단계가 아니라 이미 완료된 단계들을, 진행 순서의 역순으로 되돌린다.</li>
+<li>보상이 끝나기 전 중간 상태가 다른 요청에 보일 수 있다.
+<ul>
+<li>상태를 세분화해서 노출하면 이 혼란을 줄일 수 있다</li>
+</ul>
+</li>
+</ul>
+<p>반대로 하면 되돌아가겠지라고 단순하게 생각했던 게 문제였다. 보상은 되돌리기가 아니라 새로운 작업이고, 그 작업도 실패할 수 있고, 완벽하게 원래대로 되돌리지 못하는 경우도 있다는 걸 전제로 설계해야 하는 것 같다.</p></article></div></div>
+  </body>
+</html>
