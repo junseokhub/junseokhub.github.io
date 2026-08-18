@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>DLQ와 실패 이벤트 재처리 | Record, Then Build</title>
+    <meta name="description" content="Intro 재시도를 다 해봐도 계속 실패하는 메시지는 DLQ(Dead Letter Queue)로 보낸다는 것까지는 알고 있었다. 근데 막상 DLQ에 메시지가 쌓이기 시작하니 새로운 질문이 나왔다. 이걸 누가, 언제, 어떻게 다시 처리" />
+    <meta property="og:title" content="DLQ와 실패 이벤트 재처리 | Record, Then Build" />
+    <meta property="og:description" content="Intro 재시도를 다 해봐도 계속 실패하는 메시지는 DLQ(Dead Letter Queue)로 보낸다는 것까지는 알고 있었다. 근데 막상 DLQ에 메시지가 쌓이기 시작하니 새로운 질문이 나왔다. 이걸 누가, 언제, 어떻게 다시 처리" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/DLQ%EC%99%80-%EC%8B%A4%ED%8C%A8-%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EC%9E%AC%EC%B2%98%EB%A6%AC/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/DLQ%EC%99%80-%EC%8B%A4%ED%8C%A8-%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EC%9E%AC%EC%B2%98%EB%A6%AC/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-DEgKESKa.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>DLQ와 실패 이벤트 재처리</h1><p>Computer Science · 2026-08-19</p><h1>Intro</h1>
+<p>재시도를 다 해봐도 계속 실패하는 메시지는 DLQ(Dead Letter Queue)로 보낸다는 것까지는 알고 있었다. 근데 막상 DLQ에 메시지가 쌓이기 시작하니 새로운 질문이 나왔다. 이걸 누가, 언제, 어떻게 다시 처리해야 하는지가 하나도 정해진 게 없었다. DLQ로 보내는 순간 그 메시지에 대한 책임이 끝나는 게 아니라, 사실 거기서부터 새로운 문제가 시작되는거였다.</p>
+<p>DLQ에 쌓인 메시지를 어떻게 다뤄야 하는지 정리해보려고 한다.</p>
+<hr/>
+<h1>DLQ로 보냈다고 끝이 아니다</h1>
+<p>DLQ의 역할은 계속 실패하는 메시지가 정상 흐름을 막지 않게 옆으로 빼두는 것까지다. 그 메시지 자체가 사라지거나 해결된 건 아니다.</p>
+<pre><code class="language-bash">정상 큐: 메시지1 -&gt; 메시지2(계속 실패) -&gt; 메시지3 -&gt; ...
+                        │
+                        └-&gt; DLQ로 이동 (정상 큐는 다시 흐름)
+
+DLQ: [메시지2] ... 이제 이걸 누가 어떻게 처리하나?
+</code></pre>
+<p>DLQ에 쌓인 메시지를 그냥 방치하면, 그 메시지가 원래 하려던 일(주문 처리, 알림 발송 등)은 영영 안 끝난 채로 남는다. 그래서 DLQ 설계는 실패한 메시지를 어디로 보낼지뿐 아니라 거기서 어떻게 다시 꺼내 쓸지까지 포함해야 완성되는 것 같다.</p>
+<hr/>
+<h1>왜 실패했는지부터 구분하자</h1>
+<p>DLQ에 쌓인 메시지를 무작정 재시도하면 안 된다. 이전에 메시지 재시도 전략)에서 짚었던 일시적 실패와 영구적 실패의 구분이 DLQ에서도 그대로 중요하다.</p>
+<ul>
+<li>일시적 실패였던 것
+<ul>
+<li>처음 실패했을 때는 상대 시스템이 잠깐 죽어있었을 수 있다. 지금은 복구됐을 수도 있으니 다시 시도해볼 가치가 있다.</li>
+</ul>
+</li>
+<li>영구적 실패였던 것
+<ul>
+<li>메시지 자체의 형식이 잘못됐거나, 존재하지 않는 대상을 참조하는 경우다. 이런 건 그대로 재처리해봤자 또 실패한다. 메시지 자체를 고치거나 버려야 한다.</li>
+</ul>
+</li>
+</ul>
+<p>이 구분 없이 DLQ의 메시지를 전부 한꺼번에 재시도 큐로 밀어넣으면, 영구적으로 실패할 수밖에 없는 메시지들이 다시 처리 흐름을 막는 문제가 그대로 반복된다.</p>
+<hr/>
+<h1>재처리 방법</h1>
+<h2>그대로 다시 넣기</h2>
+<p>가장 단순한 방법은 DLQ의 메시지를 원래 큐로 그대로 돌려보내는 것이다. 원인이 일시적이었고 이미 해결됐다고 판단되면 이걸로 충분하다.</p>
+<pre><code class="language-java">@Component
+@RequiredArgsConstructor
+public class DlqReprocessor {
+
+    private final KafkaTemplate&lt;String, String&gt; kafkaTemplate;
+
+    public void reprocess(String dlqTopic, String originalTopic) {
+        // DLQ에서 읽어서 원래 토픽으로 다시 발행
+        ConsumerRecords&lt;String, String&gt; records = pollFrom(dlqTopic);
+        for (ConsumerRecord&lt;String, String&gt; record : records) {
+            kafkaTemplate.send(originalTopic, record.key(), record.value());
+        }
+    }
+}
+</code></pre>
+<p>이때 컨슈머 쪽의 멱등성이 다시 중요해진다. 원래 처리가 부분적으로 진행되다가 실패했을 수도 있어서, 재처리가 그 부분 실행분과 겹칠 수 있다.</p>
+<h2>원인을 고치고 나서 재발행</h2>
+<p>메시지 자체는 멀쩡한데 처리하는 쪽 코드에 버그가 있었던 경우라면, 코드를 배포해서 고친 다음 DLQ의 메시지를 재발행하는 방식이 맞다. 이땐 DLQ에 쌓인 메시지들을 한 번에 몰아서 재처리하게 된다.</p>
+<pre><code class="language-bash">1. 실패 원인 파악 (컨슈머 코드 버그)
+2. 코드 수정 및 배포
+3. DLQ에 쌓인 메시지를 일괄로 원래 큐에 재발행
+4. 이제는 정상 처리됨
+</code></pre>
+<p>이 방식에서 주의할 점은, DLQ에 있는 메시지들이 원래 순서대로 처리돼야 하는 경우가 있다는 거다. 일괄 재발행 시 순서가 뒤섞이면 안 되는 경우엔, 재발행 순서를 원래 순서(예: 원래 메시지의 타임스탬프나 오프셋 기준)에 맞춰야 한다.</p>
+<h2>자동 재처리</h2>
+<p>정해진 주기로 DLQ를 스캔해서 자동으로 재시도하는 방식도 있다. 다만 이건 무한정 반복하면 안 되고, 재시도 횟수 상한을 둬야 한다.</p>
+<pre><code class="language-java">@Scheduled(fixedDelay = 60_000)
+public void autoReprocess() {
+    List&lt;DlqMessage&gt; messages = dlqRepository.findRetryable();  // 재시도 가능한 것만
+    for (DlqMessage message : messages) {
+        if (message.getRetryCount() &gt;= MAX_DLQ_RETRY) {
+            message.markAsPermanentlyFailed();  // 더 이상 자동 재시도 안 함
+            continue;
+        }
+        try {
+            reprocess(message);
+            message.markAsResolved();
+        } catch (Exception e) {
+            message.incrementRetryCount();
+        }
+    }
+}
+</code></pre>
+<p>이 방식은 사람 손이 덜 가서 편하지만, 애초에 재시도로 해결 안 되는 영구적 실패까지 계속 자동으로 시도하게 되면 자원 낭비다. 그래서 DLQ에 쌓일 때 실패 원인을 어느 정도 분류해서, 자동 재처리 대상과 사람이 봐야 할 대상을 나눠두는 게 좋은 것 같다.</p>
+<h1># 개발자가 직접 확인 해야하는 경우</h1>
+<p>자동으로 해결이 안 되는 메시지는 결국 사람이 들여다봐야 한다. 이걸 위해선 DLQ 메시지에 실패 원인, 실패 시각, 지금까지 몇 번 재시도했는지 같은 맥락 정보가 같이 남아있어야 실제로 조사할 수 있다.</p>
+<pre><code class="language-java">public class DlqMessage {
+    private String originalPayload;
+    private String failureReason;     // 어떤 예외였는지
+    private int retryCount;
+    private LocalDateTime firstFailedAt;
+    private LocalDateTime lastAttemptedAt;
+}
+</code></pre>
+<p>이런 메시지가 일정 개수 이상 쌓이거나, 특정 유형의 실패가 반복되면 알림을 보내서 사람이 알아채게 만드는 것도 필요하다. DLQ가 조용히 쌓이기만 하고 아무도 안 보는 상태가 되는 게 제일 나쁜 시나리오인 것 같다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>DLQ는 실패한 메시지를 흐름 밖으로 빼는 것까지만 해결한다.
+<ul>
+<li>재처리는 별도로 설계해야 한다.</li>
+</ul>
+</li>
+<li>재처리 전에 일시적 실패였는지 영구적 실패였는지부터 구분해야 한다.</li>
+<li>재처리 방법은 크게 그대로 재발행(원인이 이미 해결됨), 코드 수정 후 일괄 재발행(버그였음), 자동 재처리(주기적 스캔 + 횟수 상한) 세 가지로 나뉜다.</li>
+<li>자동으로 안 풀리는 건 결국 개발자가 봐야 한다.
+<ul>
+<li>그러려면 실패 원인과 맥락 정보를 같이 남겨둬야 하고, 쌓이면 알림이 가야 한다.</li>
+</ul>
+</li>
+</ul>
+<p>DLQ를 만드는 것 자체보다, 그 뒤에 쌓인 메시지를 어떻게 다시 살릴지를 미리 정해두지 않으면 DLQ는 그냥 실패한 메시지들의 무덤이 되기 쉬운 것 같다.</p></article></div></div>
+  </body>
+</html>
