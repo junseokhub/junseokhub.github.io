@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 18. Vault로 시크릿 관리하기 | Record, Then Build</title>
+    <meta name="description" content="Intro 지금까지 각 서비스의 DB 비밀번호나 Redis 접속 정보 같은 건 그냥 K8s Secret으로 관리해왔다. kubectl create secret으로 등록하고, Deployment가 secretKeyRef로 그걸 환경변수" />
+    <meta property="og:title" content="[Seatflow] 18. Vault로 시크릿 관리하기 | Record, Then Build" />
+    <meta property="og:description" content="Intro 지금까지 각 서비스의 DB 비밀번호나 Redis 접속 정보 같은 건 그냥 K8s Secret으로 관리해왔다. kubectl create secret으로 등록하고, Deployment가 secretKeyRef로 그걸 환경변수" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-18-Vault%EB%A1%9C-%EC%8B%9C%ED%81%AC%EB%A6%BF-%EA%B4%80%EB%A6%AC%ED%95%98%EA%B8%B0/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-18-Vault%EB%A1%9C-%EC%8B%9C%ED%81%AC%EB%A6%BF-%EA%B4%80%EB%A6%AC%ED%95%98%EA%B8%B0/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BbZDbs14.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 18. Vault로 시크릿 관리하기</h1><p>Lab/SeatFlow · 2026-08-22</p><h1>Intro</h1>
+<p>지금까지 각 서비스의 DB 비밀번호나 Redis 접속 정보 같은 건 그냥 K8s Secret으로 관리해왔다. kubectl create secret으로 등록하고, Deployment가 secretKeyRef로 그걸 환경변수로 받아 쓰는 흔한 방식이었다. 이번 편은 이 방식을 HashiCorp Vault로 옮겨보면서, 왜 그래야 하는지, 실제로 뭐가 달라지는지, 그리고 그 과정에서 겪은 문제들을 정리했다.</p>
+<p>먼저 말해두면, 이번 편의 결론은 처음 기대했던 것과 좀 달랐다. &quot;Vault를 쓰면 이런 게 좋다&quot;는 이론적인 이야기와, 실제로 손으로 만져보고 나서 남는 실감 사이에 꽤 큰 차이가 있었다. 그 과정 자체를 있는 그대로 적었다.</p>
+<hr/>
+<h1>시크릿 관리 방법들, 그리고 K8s Secret의 한계</h1>
+<p>시크릿을 관리하는 방법은 여러 가지가 있다.</p>
+<p>방식 저장 형태 동적 발급 로테이션 운영 부담</p>
+<table><thead><tr><th>K8s Secret</th><th>base64(암호화 아님)</th><th>불가</th><th>수동</th><th>거의 없음</th></tr></thead><tbody><tr><td>HashiCorp Vault</td><td>진짜 암호화</td><td>가능</td><td>자동</td><td>직접 운영해야 함</td></tr><tr><td>클라우드 매니지드(AWS/GCP Secrets Manager)</td><td>진짜 암호화</td><td>일부 지원</td><td>자동</td><td>적음(관리형)</td></tr><tr><td>External Secrets Operator</td><td>외부 저장소 + K8s 동기화</td><td>저장소에 따름</td><td>저장소에 따름</td><td>중간</td></tr><tr><td>SOPS/sealed-secrets</td><td>Git에 암호화 커밋</td><td>불가</td><td>수동</td><td>적음</td></tr></tbody></table>
+<p>클라우드 매니지드는 특정 클라우드에 종속되니 온프레미스 홈랩엔 안 맞고, SOPS류는 로테이션이나 동적 발급 같은 고급 기능이 없다. 직접 운영해보면서 기능도 제일 풍부한 걸 겪어보고 싶어서 Vault를 택했다.</p>
+<h2>K8s Secret의 구체적인 한계</h2>
+<p>K8s Secret의 값은 base64로만 인코딩된다. 암호화가 아니다.</p>
+<pre><code class="language-bash">kubectl get secret some-secret -o jsonpath=&#x27;{.data.password}&#x27; | base64 -d
+</code></pre>
+<p>이 한 줄이면 누구나 바로 원문을 볼 수 있다. etcd 자체 암호화(EncryptionConfiguration)를 별도로 켜지 않으면, etcd 백업이 유출되는 순간 그대로 시크릿도 유출된다. 그리고 &quot;누가 언제 이 값을 조회했는지&quot; 감사 로그가 기본적으로 없다.</p>
+<hr/>
+<h1>Vault 설치와 기본 동작 확인</h1>
+<p>Helm으로 설치했다. ARM 워커 노드에 고정하고, Longhorn StorageClass로 데이터를 영속화했다.</p>
+<pre><code class="language-bash">helm repo add hashicorp https://helm.releases.hashicorp.com
+helm install vault hashicorp/vault -n vault -f values.yaml
+</code></pre>
+<p>values.yaml의 핵심은 이렇다.</p>
+<pre><code class="language-yaml">server:
+  nodeSelector:
+    kubernetes.io/arch: arm64
+  dataStorage:
+    enabled: true
+    size: 5Gi
+    storageClass: longhorn
+  standalone:
+    enabled: true
+</code></pre>
+<h2>초기화와 봉인 해제</h2>
+<p>Vault는 뜨자마자 봉인(sealed)된 상태다. 초기화를 하면 Unseal Key 5개와 Root Token이 나오는데, 이 중 3개(threshold)를 모아야 봉인을 풀 수 있다.</p>
+<pre><code>kubectl exec -it vault-0 -n vault -- vault operator init
+kubectl exec -it vault-0 -n vault -- vault operator unseal &lt;key1&gt;
+kubectl exec -it vault-0 -n vault -- vault operator unseal &lt;key2&gt;
+kubectl exec -it vault-0 -n vault -- vault operator unseal &lt;key3&gt;
+</code></pre>
+<p>이건 K8s Secret과 근본적으로 다른 지점이다. K8s Secret은 클러스터가 뜨면 바로 읽히지만, Vault는 명시적인 봉인 해제 절차 없이는 아무도 접근할 수 없다.</p>
+<h2>KV 버전 관리</h2>
+<p>KV-v2 엔진을 켜고 값을 저장한 뒤, 같은 경로에 다시 저장해봤다.</p>
+<pre><code>vault kv put secret/some-service password=&quot;old-value&quot;
+vault kv put secret/some-service password=&quot;new-value&quot;
+
+vault kv get -version=1 secret/some-service
+# → password=old-value 그대로 조회됨
+</code></pre>
+<p>K8s Secret이었다면 이전 값은 영원히 사라졌을 값이다. Vault는 값을 덮어쓰는 게 아니라 새 버전을 쌓는 방식이라, 실수로 잘못된 값으로 바꿔도 vault kv rollback -version=1로 즉시 되돌릴 수 있다.</p>
+<hr/>
+<h1>애플리케이션에 붙이는 세 가지 방법</h1>
+<p>Vault에 값이 있다고 끝이 아니다. 그 값을 실제로 애플리케이션 파드가 어떻게 받아 쓰는지가 세 갈래로 갈린다.</p>
+<p>ESO Vault Agent Injector Spring Cloud Vault</p>
+<table><thead><tr><th>값이 앱에 보이는 형태</th><th>K8s Secret(base64)</th><th>파드 안 파일</th><th>애플리케이션 메모리</th></tr></thead><tbody><tr><td>애플리케이션 코드 변경</td><td>없음</td><td>없음(env 한 줄)</td><td>있음(의존성+설정)</td></tr><tr><td>K8s Secret 오브젝트 생성</td><td>함</td><td>안 함</td><td>안 함</td></tr><tr><td>언어 무관성</td><td>무관</td><td>파일 읽는 코드만 있으면 무관</td><td>언어별 클라이언트 라이브러리 필요</td></tr></tbody></table>
+<p>세 개를 실제 서비스에 하나씩 붙여봤다 — coupon/payment-service는 ESO, reservation/show-service는 Injector, auth/user-service는 Spring Cloud Vault. 하나는 K8s Secret 그대로 남겨서(seat-service) 비교 기준으로 삼았다.</p>
+<h2>1. External Secrets Operator</h2>
+<p>ESO는 애플리케이션 입장에서 아무것도 안 바뀐 것처럼 보이게 하는 방식이다. Vault의 값을 읽어서, 여전히 평범한 K8s Secret 오브젝트를 만들어준다. Deployment는 여전히 secretKeyRef로 그 Secret을 참조한다.</p>
+<pre><code class="language-yaml">apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: coupon-service-external
+spec:
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: coupon-service-secret   # 기존 Deployment가 참조하던 이름 그대로
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: seatflow/coupon-service
+</code></pre>
+<p>ClusterSecretStore로 만든 이유는, SecretStore(namespace 범위)로는 Vault를 관리하는 namespace 밖에서 참조가 안 되기 때문이다. 여러 서비스가 각자 다른 namespace에 있어도 공용으로 쓰려면 클러스터 범위 리소스가 필요하다.</p>
+<p>이 방식의 제일 큰 장점은 애플리케이션 코드를 하나도 안 건드려도 된다는 것이다. Deployment의 secretKeyRef 참조 방식 자체가 그대로 유지되니, ArgoCD가 관리하는 매니페스트도 대부분 그대로다.</p>
+<h2>2. Vault Agent Injector</h2>
+<p>ESO와 다르게, 이 방식은 K8s Secret 오브젝트를 아예 안 만든다. 파드가 뜰 때 사이드카(또는 init 컨테이너)가 Vault에서 직접 값을 받아와 파드 안의 임시 파일로 써준다.</p>
+<pre><code class="language-yaml">metadata:
+  annotations:
+    vault.hashicorp.com/agent-inject: &quot;true&quot;
+    vault.hashicorp.com/role: &quot;reservation-service-role&quot;
+    vault.hashicorp.com/agent-pre-populate-only: &quot;true&quot;
+    vault.hashicorp.com/agent-inject-secret-config.properties: &quot;secret/data/seatflow/reservation-service&quot;
+    vault.hashicorp.com/agent-inject-template-config.properties: |
+      {{- with secret &quot;secret/data/seatflow/reservation-service&quot; -}}
+      {{- range $k, $v := .Data.data }}
+      {{ $k }}={{ $v }}
+      {{ end -}}
+      {{- end }}
+</code></pre>
+<p>kubectl get secret으로 아무리 뒤져도 이 값들은 안 나온다. 오직 그 파드 안의 임시 파일로만 존재하고, 파드가 죽으면 같이 사라진다. K8s Secret 자체의 노출 위험을 원천적으로 없애는 방식은 이거였다 — ESO는 관리 편의성을 개선했을 뿐, 여전히 K8s Secret이라는 오브젝트 자체는 base64로 etcd에 남는다.</p>
+<h3>이 방식을 실제로 붙이면서 겪은 것들</h3>
+<p>이론상 간단해 보였는데, 실제로 붙이는 과정에서 여러 층위의 문제를 순서대로 만났다.</p>
+<ul>
+<li>
+<p>어노테이션 이름 오타</p>
+<ul>
+<li>agent-prepopulate-only가 아니라 agent-pre-populate-only다(하이픈 위치). 틀리면 사이드카가 계속 떠 있는 채로 남는다.</li>
+</ul>
+</li>
+<li>
+<p>템플릿 문법 충돌</p>
+<ul>
+<li>Helm의 템플릿 문법({{ }})과 Vault Agent가 쓰는 템플릿 문법(consul-template, 마찬가지로 {{ }})이 겹친다. 커스텀 delimiter로 피해보려 했지만 Vault Agent가 지원하지 않는다. 해결은 Helm의 백틱 문자열로 리터럴 {{ }}를 출력하게 만드는 것이었다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-yaml">vault.hashicorp.com/agent-inject-template-config.properties: |
+  {{`{{- with secret &quot;secret/data/seatflow/`}}{{ .Values.appName }}{{`&quot; -}}`}}
+  {{`{{- range $k, $v := .Data.data }}`}}
+  {{`{{ $k }}={{ $v }}`}}
+  {{`{{ end -}}`}}
+  {{`{{- end }}`}}
+</code></pre>
+<ul>
+<li>
+<p>프로퍼티 이름 규칙</p>
+<ul>
+<li>ESO는 환경변수로 값이 들어가니 SPRING_DATASOURCE_URL처럼 저장해도 Spring Boot가 자동으로 relaxed binding 해준다. 근데 Injector는 값을 파일로 직접 떨어뜨리므로, Vault에 저장하는 키 이 자체가 Spring이 기대하는 점 표기법(spring.datasource.url)과 정확히 일치해야 한다. 하이픈이 필요한 이름(driver-class-name, bootstrap-servers)은 단순 치환으로 못 맞추니, 저장할 때부터 정확한 케밥/점 표기법으로 등록해야 한다.</li>
+</ul>
+</li>
+<li>
+<p>여러 줄 값 처리</p>
+<ul>
+<li>JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다 — Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data &quot;jwt.public.key&quot; 형태로 명시적으로 접근해야 한다.</li>
+</ul>
+</li>
+<li>
+<p>정책 권한 범위</p>
+<ul>
+<li>공통 경로를 새로 만들면, 그 경로를 쓰는 모든 서비스의 policy에 read 권한을 잊지 않고 추가해야 한다.</li>
+</ul>
+</li>
+<li>
+<p>audience 클레임</p>
+<ul>
+<li>ESO 쪽 Role에는 audience=vault를 지정했었는데, 이 설정을 Injector용 Role에도 그대로 넣었더니 invalid audience (aud) claim 에러로 인증 자체가 거부됐다. Injector가 자동으로 쓰는 ServiceAccount 토큰은 이 audience 클레임을 갖고 있지 않다. Injector용 Role에는 audience를 넣지 말아야 한다.</li>
+</ul>
+</li>
+<li>
+<p>컨트롤플레인-워커 노드 간 admission webhook 타임아웃</p>
+<ul>
+<li>이건 Vault 자체보다는 홈랩 클러스터의 네트워크 구성 문제였다. vault-agent-injector가 ARM 워커 노드에 떠 있었는데, API 서버(x86 컨트롤플레인)가 이 파드의 mutating webhook을 호출할 때만 유독 타임아웃이 났다. 직접 curl로 확인해보면 연결 자체는 잘 되는데, API 서버가 호출하면 안 됐다.</li>
+<li>iptables NAT 체인은 정확히 DNAT까지 적용되는데, 그 이후 Tailscale 오버레이를 거치는 구간에서 패킷의 소스 IP가 예상과 다르게 채워지는 것으로 보이는 지점까지 좁혔지만, 완전한 근본 원인은 확정하지 못했다. vault-agent-injector를 컨트롤플레인 노드에 고정 배치(nodeSelector)하는 것으로 우회했다.</li>
+</ul>
+</li>
+</ul>
+<h2>3. Spring Cloud Vault</h2>
+<p>앞의 두 방식과 다르게, 이건 K8s 리소스를 거의 안 건드리고 애플리케이션 코드(의존성, 설정)를 고치는 방식이다.</p>
+<pre><code class="language-groovy">dependencyManagement {
+    imports {
+        mavenBom(&quot;org.springframework.cloud:spring-cloud-dependencies:2025.0.0&quot;)
+    }
+}
+
+dependencies {
+    implementation(&quot;org.springframework.cloud:spring-cloud-starter-vault-config&quot;)
+}
+</code></pre>
+<pre><code class="language-groovy">spring:
+  config:
+    import: &quot;vault://secret/seatflow/auth-service&quot;
+  cloud:
+    vault:
+      uri: http://vault.vault.svc.cluster.local:8200
+      authentication: KUBERNETES
+      kubernetes:
+        role: auth-service-role
+      kv:
+        default-context: seatflow/auth-service
+</code></pre>
+<p>여기서 놓치기 쉬운 지점이 하나 있었다. 지금까지(ESO, Injector) 방식에서는 application.yml에 Vault 관련 내용이 전혀 필요 없었다.
+모든 값이 K8s가 이미 주입해준 채로 시작됐기 때문이다. 그래서 이 프로젝트는 application.yml을 아예 .gitignore/.dockerignore에 넣어서 이미지에 포함되지 않게 해뒀었다. 근데 Spring Cloud Vault는 다르다.
+Vault가 어디 있고, 어떻게 인증하고, 어느 경로를 볼지는 애플리케이션이 스스로 알아야 하는 부팅 절차의 일부라, 이 정보는 반드시 빌드된 이미지 안에 포함돼야 한다. 다행히 이 안에 진짜 비밀정보(DB 비밀번호 등)는 없다.
+Vault 주소나 인증 방식 같은, 공개돼도 무방한 설정일 뿐이다. .gitignore/.dockerignore 규칙을 이 파일만큼은 예외로 두거나 조정해야 한다.</p>
+<p>ServiceAccount도 Injector처럼 새로 안 만들어도 된다. K8s가 모든 파드에 기본으로 자동 마운트해주는 ServiceAccount 토큰을 Spring Cloud Vault가 그대로 재사용한다.</p>
+<hr/>
+<h1>그래서 뭐가 실제로 다른걸까?</h1>
+<p>세 가지 방식을 다 붙여보고 나서, 처음 예상과 다른 결론에 도달했다. Vault를 쓰면 K8s Secret보다 낫다는 이야기를 이론으로만 들었을 때와, 실제로 손으로 값을 등록하고 파드를 재시작해가며 확인했을 때의 체감이 꽤 달랐다.</p>
+<h2>지금 규모(1인, 클러스터 1개)에서 실제로 확인된 차이는 딱 하나였다</h2>
+<p>버전 관리(rollback)다. 값을 잘못 바꿔도 이전 버전으로 즉시 되돌릴 수 있다는 것.
+건 오늘 직접 손으로 확인한, 유일하게 명확한 이점이었다.</p>
+<p>나머지(여러 클러스터 동기화, 세밀한 접근 제어, 감사 로그)는 전부 지금 이 규모에서는 체감이 안 되었다. 클러스터가 하나뿐이면 동기화할 대상이 없고, 혼자 운영하면 권한을 나눌 사람이 없고, 감사 로그를 볼 필요도 없다.</p>
+<h2>그럼 실무 규모에서는 뭐가 다를까?</h2>
+<p>여기서부터는 오늘 직접 겪지 못한, 이론으로만 정리한 부분이다.</p>
+<ul>
+<li>
+<p>동적 시크릿</p>
+<ul>
+<li>오늘 한 건 전부 정적 시크릿</li>
+<li>사람이 값을 직접 넣고 애플리케이션이 그 값을 그대로 계속 쓰는 방식이다. Vault의 진짜 강력한 기능은 DB 자격증명을 요청할 때마다 즉석에서 새로 발급해주는 것이다. Vault가 DB에 직접 연결 권한을 갖고 있어서, 애플리케이션이 요청할 때마다 몇 시간짜리 임시 계정을 발급하고, 그 계정은 시간이 지나면 자동으로 삭제된다. 고정된 비밀번호를 잘 숨기는 것에서, 애초에 오래 쓰는 비밀번호 자체를 없애는 것으로 패러다임이 바뀐다.</li>
+</ul>
+</li>
+<li>
+<p>감사 로그</p>
+<ul>
+<li>시크릿이 유출된 사고가 났을 때, 누가 언제 이 값을 조회했는지를 추적할 수 있다는 건 규제 산업(금융, 의료)에서는 법적 요구사항인 경우도 많다.</li>
+</ul>
+</li>
+<li>
+<p>세밀한 접근 제어</p>
+<ul>
+<li>팀이 커지면, 이 팀은 이 서비스 시크릿만 같은 세밀한 정책이 K8s RBAC보다 Vault policy에서 훨씬 자연스럽게 표현된다.</li>
+</ul>
+</li>
+</ul>
+<h2>그럼 K8s Secret에서 굳이 안 옮겨도 되는걸까?</h2>
+<p>혼자 운영하는 홈랩 규모라면, 정직하게 그 판단도 합리적이다. 오늘 확인한 실질적 이점(버전 관리)이 도입 비용(별도 인프라 운영, 위에서 나열한 여러 문제들과 씨름하는 시간)을 확실히 정당화하는지는 상황에 따라 다르다. 대신 오늘 겪은 것 자체는, 나중에 이게 실제로 필요해질 상황(팀이 커지거나, 규제 요구사항이 생기거나)이 왔을 때 바로 쓸 수 있는 경험이 됐다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>K8s Secret은 base64일 뿐 암호화가 아니고, 버전 관리나 감사 로그도 없다.</li>
+<li>Vault로 옮기는 방법은 최소 세 가지고, 각각 K8s Secret을 얼마나 완전히 대체하는지, 애플리케이션 코드를 얼마나 건드려야 하는지가 다르다.</li>
+<li>ESO는 관리 편의성 개선에 가깝고, K8s Secret 자체는 여전히 만들어진다.</li>
+<li>Injector는 K8s Secret 자체를 없애지만, 그만큼 Helm 템플릿 문법 충돌이나 프로퍼티 이름 규칙 같은 세밀한 문제를 여럿 만난다.</li>
+<li>Spring Cloud Vault는 애플리케이션이 스스로 Vault에 접속하는 방식이라, Vault 연결 정보 자체는(진짜 시크릿과 달리) 빌드 이미지에 포함돼야 한다.</li>
+<li>지금 규모에서 실제로 확인된 이점은 버전 관리 하나였고, 동적 시크릿이나 감사 로그 같은 나머지는 조직/클러스터 규모가 커질 때 빛을 발하는, 아직 검증 못 한 이야기다.</li>
+</ul>
+<hr/>
+<h1>NEXT</h1>
+<p>19편에서는 모니터링 쪽으로 넘어가서, 지금까지 로그로만 확인하던 것들을 Grafana로 시각화하고 대시보드로 관리해 볼 예정이다.</p></article></div></div>
+  </body>
+</html>
