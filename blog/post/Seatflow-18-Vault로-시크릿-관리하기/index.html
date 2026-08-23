@@ -32,13 +32,13 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-BbZDbs14.js"></script>
+    <script type="module" crossorigin src="/assets/index-DHkBfqJt.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
   </head>
   <body>
     <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 18. Vault로 시크릿 관리하기</h1><p>Lab/SeatFlow · 2026-08-22</p><h1>Intro</h1>
 <p>지금까지 각 서비스의 DB 비밀번호나 Redis 접속 정보 같은 건 그냥 K8s Secret으로 관리해왔다. kubectl create secret으로 등록하고, Deployment가 secretKeyRef로 그걸 환경변수로 받아 쓰는 흔한 방식이었다. 이번 편은 이 방식을 HashiCorp Vault로 옮겨보면서, 왜 그래야 하는지, 실제로 뭐가 달라지는지, 그리고 그 과정에서 겪은 문제들을 정리했다.</p>
-<p>먼저 말해두면, 이번 편의 결론은 처음 기대했던 것과 좀 달랐다. &quot;Vault를 쓰면 이런 게 좋다&quot;는 이론적인 이야기와, 실제로 손으로 만져보고 나서 남는 실감 사이에 꽤 큰 차이가 있었다. 그 과정 자체를 있는 그대로 적었다.</p>
+<p>먼저 말해두면, 이번 편의 결론은 처음 기대했던 것과 좀 달랐다. Vault를 쓰면 이런 게 좋다는 이론적인 이야기와, 실제로 손으로 만져보고 나서 남는 실감 사이에 꽤 큰 차이가 있었다. 그 과정 자체를 있는 그대로 적었다.</p>
 <hr/>
 <h1>시크릿 관리 방법들, 그리고 K8s Secret의 한계</h1>
 <p>시크릿을 관리하는 방법은 여러 가지가 있다.</p>
@@ -83,13 +83,14 @@ vault kv put secret/some-service password=&quot;new-value&quot;
 vault kv get -version=1 secret/some-service
 # → password=old-value 그대로 조회됨
 </code></pre>
-<p>K8s Secret이었다면 이전 값은 영원히 사라졌을 값이다. Vault는 값을 덮어쓰는 게 아니라 새 버전을 쌓는 방식이라, 실수로 잘못된 값으로 바꿔도 vault kv rollback -version=1로 즉시 되돌릴 수 있다.</p>
+<p>K8s Secret이었다면 이전 값은 영원히 사라졌을 값이다. Vault는 값을 덮어쓰는 게 아니라 새 버전을 쌓는 방식이라, 실수로 잘못된 값으로 바꿔도 <code>vault kv rollback -version=1</code> 로 즉시 되돌릴 수 있다.</p>
 <hr/>
 <h1>애플리케이션에 붙이는 세 가지 방법</h1>
 <p>Vault에 값이 있다고 끝이 아니다. 그 값을 실제로 애플리케이션 파드가 어떻게 받아 쓰는지가 세 갈래로 갈린다.</p>
 <p>ESO Vault Agent Injector Spring Cloud Vault</p>
 <table><thead><tr><th>값이 앱에 보이는 형태</th><th>K8s Secret(base64)</th><th>파드 안 파일</th><th>애플리케이션 메모리</th></tr></thead><tbody><tr><td>애플리케이션 코드 변경</td><td>없음</td><td>없음(env 한 줄)</td><td>있음(의존성+설정)</td></tr><tr><td>K8s Secret 오브젝트 생성</td><td>함</td><td>안 함</td><td>안 함</td></tr><tr><td>언어 무관성</td><td>무관</td><td>파일 읽는 코드만 있으면 무관</td><td>언어별 클라이언트 라이브러리 필요</td></tr></tbody></table>
-<p>세 개를 실제 서비스에 하나씩 붙여봤다 — coupon/payment-service는 ESO, reservation/show-service는 Injector, auth/user-service는 Spring Cloud Vault. 하나는 K8s Secret 그대로 남겨서(seat-service) 비교 기준으로 삼았다.</p>
+<p>세 개를 실제 서비스에 하나씩 붙여봤다.
+coupon/payment-service는 ESO, reservation/show-service는 Injector, auth/user-service는 Spring Cloud Vault. 하나는 K8s Secret 그대로 남겨서(seat-service) 비교 기준으로 삼았다.</p>
 <h2>1. External Secrets Operator</h2>
 <p>ESO는 애플리케이션 입장에서 아무것도 안 바뀐 것처럼 보이게 하는 방식이다. Vault의 값을 읽어서, 여전히 평범한 K8s Secret 오브젝트를 만들어준다. Deployment는 여전히 secretKeyRef로 그 Secret을 참조한다.</p>
 <pre><code class="language-yaml">apiVersion: external-secrets.io/v1
@@ -158,7 +159,7 @@ spec:
 <li>
 <p>여러 줄 값 처리</p>
 <ul>
-<li>JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다 — Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data &quot;jwt.public.key&quot; 형태로 명시적으로 접근해야 한다.</li>
+<li>JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다 — Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data <code>jwt.public.key</code> 형태로 명시적으로 접근해야 한다.</li>
 </ul>
 </li>
 <li>

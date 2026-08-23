@@ -12614,7 +12614,7 @@ thumbnail: /blog/images/seatflow_msa.png
 
 지금까지 각 서비스의 DB 비밀번호나 Redis 접속 정보 같은 건 그냥 K8s Secret으로 관리해왔다. kubectl create secret으로 등록하고, Deployment가 secretKeyRef로 그걸 환경변수로 받아 쓰는 흔한 방식이었다. 이번 편은 이 방식을 HashiCorp Vault로 옮겨보면서, 왜 그래야 하는지, 실제로 뭐가 달라지는지, 그리고 그 과정에서 겪은 문제들을 정리했다.
 
-먼저 말해두면, 이번 편의 결론은 처음 기대했던 것과 좀 달랐다. "Vault를 쓰면 이런 게 좋다"는 이론적인 이야기와, 실제로 손으로 만져보고 나서 남는 실감 사이에 꽤 큰 차이가 있었다. 그 과정 자체를 있는 그대로 적었다.
+먼저 말해두면, 이번 편의 결론은 처음 기대했던 것과 좀 달랐다. Vault를 쓰면 이런 게 좋다는 이론적인 이야기와, 실제로 손으로 만져보고 나서 남는 실감 사이에 꽤 큰 차이가 있었다. 그 과정 자체를 있는 그대로 적었다.
 
 ---
 
@@ -12693,7 +12693,7 @@ vault kv get -version=1 secret/some-service
 # → password=old-value 그대로 조회됨
 \`\`\`
 
-K8s Secret이었다면 이전 값은 영원히 사라졌을 값이다. Vault는 값을 덮어쓰는 게 아니라 새 버전을 쌓는 방식이라, 실수로 잘못된 값으로 바꿔도 vault kv rollback -version=1로 즉시 되돌릴 수 있다.
+K8s Secret이었다면 이전 값은 영원히 사라졌을 값이다. Vault는 값을 덮어쓰는 게 아니라 새 버전을 쌓는 방식이라, 실수로 잘못된 값으로 바꿔도 \`vault kv rollback -version=1\` 로 즉시 되돌릴 수 있다.
 
 ---
 
@@ -12709,7 +12709,8 @@ ESO Vault Agent Injector Spring Cloud Vault
 | K8s Secret 오브젝트 생성 | 함 | 안 함 | 안 함 |
 | 언어 무관성 | 무관 | 파일 읽는 코드만 있으면 무관 | 언어별 클라이언트 라이브러리 필요 |
 
-세 개를 실제 서비스에 하나씩 붙여봤다 — coupon/payment-service는 ESO, reservation/show-service는 Injector, auth/user-service는 Spring Cloud Vault. 하나는 K8s Secret 그대로 남겨서(seat-service) 비교 기준으로 삼았다.
+세 개를 실제 서비스에 하나씩 붙여봤다.
+coupon/payment-service는 ESO, reservation/show-service는 Injector, auth/user-service는 Spring Cloud Vault. 하나는 K8s Secret 그대로 남겨서(seat-service) 비교 기준으로 삼았다.
 
 ## 1. External Secrets Operator
 
@@ -12780,7 +12781,7 @@ vault.hashicorp.com/agent-inject-template-config.properties: |
   - ESO는 환경변수로 값이 들어가니 SPRING_DATASOURCE_URL처럼 저장해도 Spring Boot가 자동으로 relaxed binding 해준다. 근데 Injector는 값을 파일로 직접 떨어뜨리므로, Vault에 저장하는 키 이 자체가 Spring이 기대하는 점 표기법(spring.datasource.url)과 정확히 일치해야 한다. 하이픈이 필요한 이름(driver-class-name, bootstrap-servers)은 단순 치환으로 못 맞추니, 저장할 때부터 정확한 케밥/점 표기법으로 등록해야 한다.
 
 - 여러 줄 값 처리
-  - JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다 — Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data "jwt.public.key" 형태로 명시적으로 접근해야 한다.
+  - JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다 — Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data \`jwt.public.key\` 형태로 명시적으로 접근해야 한다.
 
 - 정책 권한 범위
   - 공통 경로를 새로 만들면, 그 경로를 쓰는 모든 서비스의 policy에 read 권한을 잊지 않고 추가해야 한다.
