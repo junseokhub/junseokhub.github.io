@@ -12781,7 +12781,8 @@ vault.hashicorp.com/agent-inject-template-config.properties: |
   - ESO는 환경변수로 값이 들어가니 SPRING_DATASOURCE_URL처럼 저장해도 Spring Boot가 자동으로 relaxed binding 해준다. 근데 Injector는 값을 파일로 직접 떨어뜨리므로, Vault에 저장하는 키 이 자체가 Spring이 기대하는 점 표기법(spring.datasource.url)과 정확히 일치해야 한다. 하이픈이 필요한 이름(driver-class-name, bootstrap-servers)은 단순 치환으로 못 맞추니, 저장할 때부터 정확한 케밥/점 표기법으로 등록해야 한다.
 
 - 여러 줄 값 처리
-  - JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다 — Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data \`jwt.public.key\` 형태로 명시적으로 접근해야 한다.
+  - JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다.
+  - Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data \`jwt.public.key\` 형태로 명시적으로 접근해야 한다.
 
 - 정책 권한 범위
   - 공통 경로를 새로 만들면, 그 경로를 쓰는 모든 서비스의 policy에 read 권한을 잊지 않고 추가해야 한다.

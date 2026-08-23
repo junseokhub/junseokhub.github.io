@@ -32,7 +32,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-DHkBfqJt.js"></script>
+    <script type="module" crossorigin src="/assets/index-BRB3K6eZ.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
   </head>
   <body>
@@ -159,7 +159,8 @@ spec:
 <li>
 <p>여러 줄 값 처리</p>
 <ul>
-<li>JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다 — Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data <code>jwt.public.key</code> 형태로 명시적으로 접근해야 한다.</li>
+<li>JWT 공개키(PEM)처럼 여러 줄인 값을 다른 값들과 같은 .properties 파일에 섞으면 파싱이 깨진다. 별도 경로로 분리하고, 여러 서비스가 공유한다면 공통 경로(common-jwt) 하나로 모으는 게 낫다. 점이 포함된 키(jwt.public.key)는 템플릿 안에서 .Data.data.jwt.public.key처럼 단순 접근하면 안 된다.</li>
+<li>Go 템플릿이 이걸 중첩 필드로 오해한다. index .Data.data <code>jwt.public.key</code> 형태로 명시적으로 접근해야 한다.</li>
 </ul>
 </li>
 <li>
