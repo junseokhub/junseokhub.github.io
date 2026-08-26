@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>시크릿 관리 (Vault vs K8s Secret) | Record, Then Build</title>
+    <meta name="description" content="Intro DB 비밀번호나 API 키를 코드나 설정 파일에 그대로 박아두면 안 된다는 건 당연히 알고 있었다. 쿠버네티스에는 이미 Secret이라는 리소스가 있어서 처음엔 이거면 충분하다고 생각했다." />
+    <meta property="og:title" content="시크릿 관리 (Vault vs K8s Secret) | Record, Then Build" />
+    <meta property="og:description" content="Intro DB 비밀번호나 API 키를 코드나 설정 파일에 그대로 박아두면 안 된다는 건 당연히 알고 있었다. 쿠버네티스에는 이미 Secret이라는 리소스가 있어서 처음엔 이거면 충분하다고 생각했다." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EC%8B%9C%ED%81%AC%EB%A6%BF-%EA%B4%80%EB%A6%AC-Vault-vs-K8s-Secret/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EC%8B%9C%ED%81%AC%EB%A6%BF-%EA%B4%80%EB%A6%AC-Vault-vs-K8s-Secret/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-DeyLBZin.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DX7UyOYC.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>시크릿 관리 (Vault vs K8s Secret)</h1><p>Devops · 2026-08-26</p><h1>Intro</h1>
+<p>DB 비밀번호나 API 키를 코드나 설정 파일에 그대로 박아두면 안 된다는 건 당연히 알고 있었다. 쿠버네티스에는 이미 Secret이라는 리소스가 있어서 처음엔 이거면 충분하다고 생각했다.
+근데 찾아보니 Secret의 기본 동작이 생각보다 허술한 부분이 있었고, 그 틈을 메우려고 Vault 같은 전용 도구를 쓰는 이유가 따로 있었다.</p>
+<p>K8s Secret이 정확히 뭘 하고 뭘 안 하는지, Vault는 그 어떤 부분을 보완하는지 정리해보려고 한다.</p>
+<hr/>
+<h1>K8s Secret</h1>
+<p>쿠버네티스 Secret은 민감한 값을 별도 리소스로 분리해서, 파드에 환경변수나 볼륨으로 주입할 수 있게 해주는 오브젝트다.</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+type: Opaque
+data:
+  password: cGFzc3dvcmQxMjM=
+</code></pre>
+<pre><code class="language-yaml"># 파드에서 환경변수로 사용
+envFrom:
+  - secretRef:
+      name: db-credentials
+</code></pre>
+<p>코드나 설정 파일에서 값을 완전히 분리할 수 있다는 것만으로도 기본적인 목적은 달성한다. 문제는 그 값이 어떻게 저장되는지다.</p>
+<h2>base64는 암호화가 아니다</h2>
+<p>Secret의 <code>data</code> 필드에 들어가는 값은 base64로 인코딩된 것이다. 암호화가 아니라 인코딩이라, 누구나 디코딩해서 원래 값을 바로 볼 수 있다.</p>
+<pre><code class="language-bash">echo &quot;cGFzc3dvcmQxMjM=&quot; | base64 -d
+# password123
+</code></pre>
+<p>그리고 이 Secret은 쿠버네티스의 저장소인 etcd에 그대로 저장된다. 기본 설정에서는 etcd에 저장되는 시점에도 암호화가 안 돼 있어서, etcd에 접근할 수 있는 사람은 Secret 값을 그대로 읽을 수 있다. (쿠버네티스는 etcd 저장 시점 암호화(encryption at rest)를 별도로 설정할 수 있는 기능을 제공하긴 하지만, 기본으로 켜져 있는 건 아니다.)</p>
+<h2>그 외에 기본적으로 없는 것들</h2>
+<ul>
+<li>동적 발급이나 자동 회전
+<ul>
+<li>Secret은 누군가 값을 직접 넣어둔 정적인 값이다. 주기적으로 값을 바꾸고 싶으면(비밀번호 로테이션) 별도로 그 과정을 직접 구현해야 한다.</li>
+</ul>
+</li>
+<li>세밀한 접근 감사
+<ul>
+<li>누가 언제 이 Secret을 읽었는지에 대한 기록이 기본적으로 상세하게 남지 않는다. RBAC로 누가 접근할 수 있는지는 통제할 수 있지만, 실제로 언제 읽었는지를 추적하는 건 또 다른 문제다.</li>
+</ul>
+</li>
+</ul>
+<hr/>
+<h1>Vault</h1>
+<p>Vault는 시크릿 관리를 전담하는 별도 시스템이다. K8s Secret이 값을 저장하는 곳이라면, Vault는 값을 저장하고, 발급하고, 감사하고, 회전시키는 시스템 전체를 다룬다.</p>
+<h2>저장 자체가 암호화</h2>
+<p>Vault에 저장되는 모든 값은 암호화된 상태로 저장된다. Vault를 시작할 때 unseal(봉인 해제) 과정을 거쳐야 하는 것도 이 암호화 계층 때문이다.
+암호화 키 자체가 여러 조각으로 나뉘어 있어서, 일정 수 이상의 조각이 모여야 Vault가 실제로 값을 다룰 수 있는 상태가 된다.</p>
+<h2>정적 시크릿뿐 아니라 동적 시크릿도 다룬다</h2>
+<p>Vault의 특징적인 기능 하나는 동적 시크릿(dynamic secrets)이다. DB 접속 정보 같은 걸 미리 정해서 저장해두는 게 아니라, 애플리케이션이 요청할 때마다 그 순간에 짧은 수명을 가진 새 자격 증명을 즉석에서 발급한다.</p>
+<pre><code class="language-bash">vault read database/creds/order-service-role
+# 매번 새로운 username/password가 발급됨, 정해진 시간이 지나면 자동 만료
+</code></pre>
+<p>이러면 자격 증명이 유출되더라도 어차피 곧 만료되기 때문에 피해 범위가 줄어든다. 정적으로 하나의 비밀번호를 계속 쓰는 것보다 노출 위험이 훨씬 낮아지는 셈이다.</p>
+<h2>세밀한 접근 정책과 감사 로그</h2>
+<p>Vault는 어떤 주체가 어떤 경로의 시크릿에 접근할 수 있는지를 정책으로 세밀하게 정의할 수 있고, 모든 접근 시도가 감사 로그로 남는다. 언제 누가 어떤 시크릿을 요청했는지 추적할 수 있다는 게 K8s Secret 기본 기능과 크게 다른 지점이다.</p>
+<h2>쿠버네티스와의 통합</h2>
+<p>쿠버네티스 환경에서는 Vault Agent Injector 같은 걸 써서, 파드가 뜰 때 사이드카가 Vault에서 필요한 시크릿을 가져와 파일이나 환경변수로 주입해주는 방식으로 연동한다. 애플리케이션 코드 입장에서는 K8s Secret을 쓸 때와 크게 다르지 않게 값을 받아볼 수 있다.</p>
+<hr/>
+<h1>그래서 뭐가 다를까?</h1>
+<ul>
+<li>저장 방식
+<ul>
+<li>K8s Secret은 base64 인코딩(암호화 아님), Vault는 저장 자체가 암호화된다.</li>
+</ul>
+</li>
+<li>시크릿의 성격
+<ul>
+<li>K8s Secret은 정적인 값을 저장, Vault는 정적 시크릿과 짧은 수명의 동적 시크릿을 둘 다 다룬다.</li>
+</ul>
+</li>
+<li>감사
+<ul>
+<li>K8s Secret은 세밀한 접근 이력 추적이 기본으로 강하지 않고, Vault는 모든 접근이 감사 로그로 남는다.</li>
+</ul>
+</li>
+<li>운영 복잡도
+<ul>
+<li>K8s Secret은 쿠버네티스 안에서 별도 컴포넌트 없이 바로 쓸 수 있고, Vault는 별도 시스템을 구축 및 운영(고가용성 구성, unseal 관리 등)해야 한다.</li>
+</ul>
+</li>
+</ul>
+<hr/>
+<h1>그래서 언제 뭘 쓰는게 좋을까?</h1>
+<ul>
+<li>작은 규모거나, 시크릿 접근 감사 및 자동 회전까지는 당장 필요 없다면 K8s Secret에 etcd 암호화 정도만 켜두는 걸로 시작해도 되는 것 같다.</li>
+<li>DB 자격 증명처럼 유출 시 피해가 큰 시크릿을 짧은 수명으로 자동 회전시키고 싶거나, 누가 언제 어떤 시크릿에 접근했는지 감사가 꼭 필요하다면 Vault 쪽이 맞는 것 같다.</li>
+<li>여러 클러스터, 여러 클라우드에 걸쳐 시크릿을 중앙에서 통일해서 관리해야 한다면, 쿠버네티스에 종속된 K8s Secret보다 독립적인 Vault가 유리하다.</li>
+</ul>
+<pre><code class="language-bash">시크릿 유출 시 피해가 크고, 회전 및 감사가 중요한가?
+  -&gt; 아니오 (단순 값 분리 정도면 충분) -&gt; K8s Secret (+ etcd 암호화)
+  -&gt; 예 -&gt; Vault
+</code></pre>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>K8s Secret은 값을 base64로 인코딩해서 저장할 뿐, 기본적으로 암호화, 자동 회전, 세밀한 감사를 제공하지 않는다.</li>
+<li>Vault는 저장 자체가 암호화되고, 짧은 수명의 동적 시크릿 발급과 세밀한 접근 정책 및 감사 로그를 제공하는 전담 시스템이다.</li>
+<li>대가로 Vault는 별도 시스템을 구축하고 운영해야 하는 부담이 따른다.</li>
+<li>시크릿 유출 시 피해 규모와, 회전 및 감사가 얼마나 중요한지에 따라 고르면 될 것 같다.</li>
+</ul>
+<p>쿠버네티스에 Secret이라는 게 있으니 이거면 되곘다고 생각했던 게 반은 맞고 반은 틀렸던 것 같다. 값을 코드에서 분리하는 목적은 달성하지만, base64가 암호화가 아니라는 사실 하나만으로도 그 이상의 보안이 필요한 시크릿이라면 K8s Secret 하나로는 부족하다는 게 명확해진 것 같다.</p></article></div></div>
+  </body>
+</html>

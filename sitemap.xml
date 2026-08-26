@@ -66,6 +66,12 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/post/%EC%8B%9C%ED%81%AC%EB%A6%BF-%EA%B4%80%EB%A6%AC-Vault-vs-K8s-Secret/</loc>
+    <lastmod>2026-08-26</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/post/API-Gateway-%EB%B9%84%EA%B5%90-Ingress-vs-Kong-vs-Spring-Cloud-Gateway/</loc>
     <lastmod>2026-08-24</lastmod>
     <changefreq>monthly</changefreq>
