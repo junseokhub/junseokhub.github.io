@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 18-1. vault transit auto unseal | Record, Then Build</title>
+    <meta name="description" content="Intro 18편에서 Vault를 도입한 뒤, 며칠 지나서 계속 같은 문제를 겪었다. Vault 파드가 재시작될 때마다(배포, 노드 불안정, 클러스터 재부팅 등) 자동으로 다시 봉인(sealed)된 상태로 돌아갔고, 그때마다 Unse" />
+    <meta property="og:title" content="[Seatflow] 18-1. vault transit auto unseal | Record, Then Build" />
+    <meta property="og:description" content="Intro 18편에서 Vault를 도입한 뒤, 며칠 지나서 계속 같은 문제를 겪었다. Vault 파드가 재시작될 때마다(배포, 노드 불안정, 클러스터 재부팅 등) 자동으로 다시 봉인(sealed)된 상태로 돌아갔고, 그때마다 Unse" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-18-1-vault-transit-auto-unseal/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-18-1-vault-transit-auto-unseal/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-C52gDTms.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-sU7wtzJ7.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 18-1. vault transit auto unseal</h1><p>Lab/SeatFlow · 2026-08-28</p><h1>Intro</h1>
+<p>18편에서 Vault를 도입한 뒤, 며칠 지나서 계속 같은 문제를 겪었다. Vault 파드가 재시작될 때마다(배포, 노드 불안정, 클러스터 재부팅 등) 자동으로 다시 봉인(sealed)된 상태로 돌아갔고, 그때마다 Unseal Key 3개를 손으로 입력해야 했다. 그 사이에 시크릿을 받아야 하는 다른 서비스들이 영향을 받을 수 있는 상황이었다.</p>
+<p>18편 마지막에 이건 Auto-Unseal로 해결해야 한다고 짚어뒀던 걸, 이번 편에서 실제로 구축했다. 그 과정에서 겪은 것과, 실제로 얼마나 무인화가 됐는지를 정직하게 정리했다.</p>
+<hr/>
+<h1>왜 수동 Unseal이 문제일까?</h1>
+<p>Vault는 설계상 Unseal Key를 아는 사람이 없으면 아무도 데이터에 접근 못 하게 만들어져 있다. 이게 보안 원칙으로는 맞는데, 운영 관점에서는 큰 대가가 있다. Vault 파드가 재시작되는 건 배포, 노드 재부팅, 리소스 부족 등으로 흔하게 일어나는 일인데, 그때마다 사람이 직접 개입해야 한다면, 그 사이 시간 동안(사람이 알아채고 unseal할 때까지) Vault를 참조하는 모든 서비스가 영향을 받는다.</p>
+<p>실제로 며칠 사이에 이 문제를 두 번 겪었다. 한 번은 클러스터 안의 다른 컴포넌트가 재시작되면서, 다른 한 번은 클러스터 전체를 껐다 켜면서. 두 번 다 ExternalSecret이 <code>InvalidProviderConfig</code> 상태가 되고, <code>vault-agent-injector</code>도 인증에 실패했다.</p>
+<hr/>
+<h1>Transit Auto-Unseal의 원리</h1>
+<p>Vault가 공식으로 지원하는 자동 봉인 해제 방식은 크게 클라우드 KMS(AWS KMS, GCP Cloud KMS 등)와 Transit Auto-Unseal 두 가지다. 클라우드 KMS는 외부 클라우드 서비스가 필요해서 온프레미스 환경에는 안 맞고, Transit 방식은 HashiCorp Vault 자체를 하나 더 써서 그 역할을 대신하게 만드는 방법이다.</p>
+<pre><code>Vault #2 (vault-transit) - 실제 시크릿은 저장 안 함. 다른 Vault의 봉인을 풀어주는 암호화/복호화 기능만 제공한다.
+       -&gt; Transit Secret Engine
+Vault #1 (vault) — 실제 시크릿 저장소. 재시작될 때마다 vault-transit에게 자동으로 봉인 해제를 요청한다.
+</code></pre>
+<p>Vault를 하나 더 운영해야 한다는 게 단점이지만, vault-transit은 vault-0보다 재시작 빈도가 훨씬 낮다(배포 대상이 아니고, 그 자체로 아무 애플리케이션 로직도 없다).
+그러니 unseal이 필요한 지점을 하나로 좁히는 효과가 있다.</p>
+<hr/>
+<h1>실제 구축</h1>
+<h2>이미 운영 중인 Vault에 나중에 Auto-Unseal을 붙이는 경우</h2>
+<p>실제로 겪은 경로다. 기존 Vault에 이미 시크릿 데이터가 쌓여 있는 상태에서 Transit 방식으로 전환하려니, 씰 마이그레이션(Seal Migration)이라는 특별한 절차를 거쳐야 했다.</p>
+<pre><code class="language-bash"># 1. vault-transit 별도 설치 (실제 시크릿을 안 담으니 훨씬 가볍게)
+helm install vault-transit hashicorp/vault -n vault-transit -f vault-transit-values.yaml
+
+# 2. vault-transit 초기화 + unseal (최초 1회만)
+vault operator init
+vault operator unseal &lt;key1/2/3&gt;
+
+# 3. Transit Secret Engine 활성화
+vault secrets enable transit
+vault write -f transit/keys/autounseal
+
+# 4. vault-0이 쓸 최소 권한 정책 + 토큰 발급
+vault policy write autounseal autounseal-policy.hcl
+vault token create -policy=autounseal -period=768h -orphan
+</code></pre>
+<p>기존 Vault의 설정에 <code>seal &quot;transit&quot;</code> 블록을 추가하고 반영하면, 파드가 재시작되면서 바로 자동으로 열릴 거라 예상했는데 그렇지 않았다.</p>
+<pre><code>Seal Type: transit
+Sealed: true
+Seal Migration in Progress: true
+</code></pre>
+<p>기존에 Shamir 방식으로 이미 초기화돼 있던 데이터를 Transit으로 바꾸려니, Vault가 이건 그냥 unseal이 아니라 봉인 방식 자체를 바꾸는 마이그레이션이라고 판단하고 멈춰선 것이다. 평범한 unseal 명령은 거부됐다.</p>
+<pre><code class="language-bash">vault operator unseal &lt;key1&gt;
+# Error: migrate option not provided and seal migration is pending
+</code></pre>
+<p><code>-migrate</code> 플래그를 명시적으로 붙여서, 기존 Shamir 키 3개로 딱 한 번만 더 unseal해야 마이그레이션이 완료됐다.</p>
+<pre><code class="language-bash">vault operator unseal -migrate &lt;key1&gt;
+vault operator unseal -migrate &lt;key2&gt;
+vault operator unseal -migrate &lt;key3&gt;
+</code></pre>
+<p>이게 끝나자 <code>Seal Type: transit</code>으로 전환됐고, 이후부터는 이 Shamir 키가 더 이상 필요 없어졌다.</p>
+<h2>처음부터(신규 구축 시) 적용하는 경우</h2>
+<p>이건 직접 겪지는 않았지만, 다음에 새 프로젝트를 시작한다면 이렇게 하는 게 훨씬 단순하다. vault-transit을 먼저 준비해두고, 메인 Vault를 설치할 때부터 <code>seal &quot;transit&quot;</code> 설정을 포함시키면, 씰 마이그레이션 절차 자체가 필요 없다. <code>vault operator init</code>을 실행하면 그 자리에서 바로 <code>Sealed: false</code>가 나온다.</p>
+<p>이때 나오는 키는 Unseal Key가 아니라 Recovery Key라는 것도 다른 점이다. Transit 방식은 평상시 unseal 자체가 필요 없고, Recovery Key는 vault-transit 자체에 접근할 수 없게 되는 극단적인 상황에서만 쓰는 긴급 복구용이다.</p>
+<h2>두 케이스 비교</h2>
+<table><thead><tr><th></th><th>케이스 A (기존 → 전환)</th><th>케이스 B (처음부터)</th></tr></thead><tbody><tr><td>사용하는 키</td><td>기존 Shamir Key</td><td>Recovery Key(평소 안 씀)</td></tr><tr><td>마이그레이션 절차</td><td>필요(<code>-migrate</code> 플래그로 1회)</td><td>불필요</td></tr><tr><td>init 직후 상태</td><td>Sealed(마이그레이션 전까지)</td><td>바로 Unsealed</td></tr><tr><td>리스크</td><td>마이그레이션 도중 실수하면 복구가 까다로워질 수 있어 신중해야 함</td><td>상대적으로 단순</td></tr></tbody></table>
+<hr/>
+<h1>검증</h1>
+<p>파드를 강제로 지우고 다시 확인해봤다.</p>
+<pre><code class="language-bash">kubectl delete pod vault-0 -n vault
+kubectl get pods -n vault -w
+</code></pre>
+<p>아무 unseal 명령도 안 쳤는데, <code>READY: 1/1</code>로 자동으로 올라왔다.</p>
+<pre><code>Sealed: false
+</code></pre>
+<p>여기까지는 기대했던 대로였다. 문제는 그 다음에 왔다.</p>
+<hr/>
+<h1>한계</h1>
+<p>클러스터 전체가 재부팅되면, 결국 vault-transit도 봉인된다.
+며칠 뒤 클러스터를 껐다 켰더니, <code>vault-0</code>이 다시 <code>CrashLoopBackOff</code>였다. 원인을 보니 <code>vault-transit-0</code> 자체가 봉인된 상태였다.</p>
+<pre><code>vault-transit-0   0/1   Running (봉인됨)
+vault-0           0/1   CrashLoopBackOff (unseal 요청을 보낼 곳이 잠겨있어서 계속 실패)
+</code></pre>
+<p>Transit Auto-Unseal의 본질은 봉인을 푸는 책임을 다른 Vault에게 위임하는 것이다. 근데 그 다른 Vault도 결국 소프트웨어라, 봉인이 된다. 클러스터 전체가 같이 꺼졌다 켜지는 상황에서는, 위임받은 쪽도 똑같이 다시 잠긴 채로 뜨기 때문에 문제가 한 단계 뒤로 밀렸을 뿐 똑같이 반복된다.</p>
+<p>vault-transit을 수동으로 unseal하니, 그 다음엔 vault-0이 자동으로 회복됐다.</p>
+<pre><code class="language-bash">kubectl exec -it vault-transit-0 -n vault-transit -- vault operator unseal &lt;key1/2/3&gt;
+# 이후 vault-0은 자동으로 CrashLoopBackOff에서 벗어나 Running으로 회복
+</code></pre>
+<h2>진짜 완전 무인을 원한다면?</h2>
+<p>결국 클라우드 KMS가 필요하다.</p>
+<p>Transit 방식이 아니라 클라우드 KMS(AWS KMS, GCP Cloud KMS 등)를 쓰면, 봉인을 푸는 열쇠 자체가 클러스터와 완전히 독립된 외부 서비스에 있다. 클러스터가 통째로 꺼졌다 켜져도 KMS는 영향을 안 받으니, 진짜 예외 없이 무인으로 복구된다. 이건 실제로 비용도 크지 않다(KMS 키 하나는 대체로 월 1달러 수준). 인프라는 온프레미스로, unseal 키만 클라우드로 분리하는 하이브리드 구성은 실무에서도 흔한 패턴이다.</p>
+<hr/>
+<h1>결론</h1>
+<pre><code>해결된 것: Vault 파드 하나만 재시작되는 상황(배포, OOM 등 가장 흔한 경우) -&gt; 완전 자동, 사람 개입 0
+
+여전히 남은 것: 클러스터 전체가 재부팅되는 상황(드물지만 발생함) -&gt; vault-transit 하나만 수동으로 열면 됨
+</code></pre>
+<p>지금 규모(홈랩, 혼자 운영)에서는 클라우드 KMS까지 가는 대신 이 상태로 만족하기로 했다. 완전 무인화는 못 이뤘지만, unseal을 손으로 해야 하는 대상이 여러 서비스에 영향을 주는 메인 Vault에서, 그 자체로는 아무 로직도 없는 vault-transit 하나로 좁혀진 것 자체가 의미 있는 개선이다. 예전에는 클러스터가 재부팅될 때마다 vault-0을 직접 열어야 했는데, 이제는 vault-transit만 열면 vault-0은 알아서 따라온다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>Transit Auto-Unseal은 Vault를 하나 더 써서, 그 Vault가 다른 Vault의 봉인을 자동으로 풀어주게 만드는 방식이다.</li>
+<li>이미 운영 중인 Vault에 나중에 적용하려면 씰 마이그레이션(<code>-migrate</code> 플래그) 절차를 거쳐야 한다. 처음부터 설계하면 이 절차 자체가 필요 없다.</li>
+<li>배포나 파드 재시작처럼 흔한 상황에는 완벽하게 무인으로 동작했다.</li>
+<li>클러스터 전체 재부팅처럼 드문 상황에는, Auto-Unseal의 위임 대상(vault-transit) 자체도 결국 다시 봉인된다는 한계가 남는다.</li>
+<li>진짜 완전 무인화는 클러스터 밖의 클라우드 KMS로만 가능하다. 지금 규모에서는 그 투자 대신, unseal 대상을 하나로 좁힌 지금 상태를 현실적인 타협으로 받아들였다.</li>
+</ul>
+<hr/>
+<h1>NEXT</h1>
+<p>19편에서는 각 서비스의 상태를 실시간으로 관찰하는 Prometheus/Grafana 모니터링을 다룬다.</p></article></div></div>
+  </body>
+</html>
