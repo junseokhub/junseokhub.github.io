@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>[Seatflow] 19. Prometheus &amp; Grafana 모니터링 | Record, Then Build</title>
+    <meta name="description" content="Intro 지금까지는 서비스에 문제가 생기면 로그를 뒤져서 원인을 찾았다. 근데 로그는 이미 일어난 일을 사후에 확인하는 용도지, 지금 이 순간 어떤 상태인지를 보여주지는 못한다. 이번 편은 각 서비스의 상태(CPU, 메모리, 요청 " />
+    <meta property="og:title" content="[Seatflow] 19. Prometheus &amp; Grafana 모니터링 | Record, Then Build" />
+    <meta property="og:description" content="Intro 지금까지는 서비스에 문제가 생기면 로그를 뒤져서 원인을 찾았다. 근데 로그는 이미 일어난 일을 사후에 확인하는 용도지, 지금 이 순간 어떤 상태인지를 보여주지는 못한다. 이번 편은 각 서비스의 상태(CPU, 메모리, 요청 " />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/Seatflow-19-Prometheus-Grafana-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/" />
+    <meta property="og:image" content="https://junseokhub.github.io/blog/images/seatflow_msa.png" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/Seatflow-19-Prometheus-Grafana-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-CUeCqu4-.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-sU7wtzJ7.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>[Seatflow] 19. Prometheus &amp; Grafana 모니터링</h1><p>Lab/SeatFlow · 2026-08-29</p><h1>Intro</h1>
+<p>지금까지는 서비스에 문제가 생기면 로그를 뒤져서 원인을 찾았다. 근데 로그는 이미 일어난 일을 사후에 확인하는 용도지, 지금 이 순간 어떤 상태인지를 보여주지는 못한다. 이번 편은 각 서비스의 상태(CPU, 메모리, 요청 처리량, 에러율 등)를 실시간으로 수집하고 시각화하는 걸 다뤘다.
+Prometheus로 메트릭을 모으고, Grafana로 그걸 대시보드에 시각화 해보겠다.</p>
+<hr/>
+<h1>관찰 대상을 계층으로 나눠 접근</h1>
+<p>실무에서 모니터링 대상을 정할 때 보통 계층을 나눈다.</p>
+<pre><code>1. 인프라 계층 - Node, Pod 레벨의 CPU/메모리/디스크
+2. 플랫폼 계층 - JVM, HTTP, DB 커넥션풀처럼 프레임워크가 공통으로 제공하는 지표
+3. 비즈니스 계층 — 그 서비스만의 도메인 특화 지표 (Outbox 적체, 좌석 점유율 등)
+</code></pre>
+<p>1번은 이미 클러스터에 설치돼 있던 kube-prometheus-stack이 기본으로 다 제공하고 있었다. 이번 편에서 새로 만든 건 2번(플랫폼 계층)이다.
+7개 서비스가 각자 자기 상태를 Prometheus 형식으로 노출하고, Prometheus가 그걸 실제로 수집하고, Grafana로 시각화하는 파이프라인 전체다.</p>
+<h2>알림(Alert) 설계 원칙도 미리 정리하고 시작</h2>
+<p>실무에서 흔한 실수 하나가, CPU 80% 넘으면 알림처럼 원인(cause) 기준으로 알림을 거는 것이다. 이러면 알림이 너무 자주 울려서 다들 무시하게 된다(&quot;alert fatigue&quot;). 대신 표준은 증상(symptom) 기준이다.사용자가 실제로 영향받는 지표가 임계값을 넘을 때만 울리게 한다.</p>
+<pre><code>나쁜 예: CPU 80% 초과 -&gt; 알림
+좋은 예: 5xx 에러율이 5분간 5% 초과 -&gt; 알림 (CPU가 왜 높은지는 대시보드로 그 다음에 확인)
+</code></pre>
+<hr/>
+<h1>적용 단계</h1>
+<h2>서비스가 메트릭을 노출하게 만들기</h2>
+<p>Spring Boot Actuator는 이미 모든 서비스에 있었다(livenessProbe, readinessProbe가 이미 /actuator/health를 쓰고 있었다). 근데 Prometheus 형식으로 메트릭을 만들어주는 라이브러리는 없었다.</p>
+<h3>왜 이걸 공통 모듈에?</h3>
+<p>처음엔 coupon-service의 build.gradle.kts에 직접 넣으려다가, 결국 모든 서비스가 다 필요하다는 걸 깨닫고 common-web(모든 서비스가 공유하는 공통 모듈)로 옮겼다.</p>
+<pre><code class="language-groovy">// libs/common-web/build.gradle.kts
+dependencies {
+    api(&quot;org.springframework.boot:spring-boot-starter-web&quot;)
+    api(&quot;io.micrometer:micrometer-registry-prometheus&quot;)   // 추가
+    // ...
+}
+</code></pre>
+<p>implementation이 아니라 api로 넣은 게 핵심이다. implementation은 common-web 내부에서만 이 라이브러리를 쓸 수 있고, 그걸 가져다 쓰는 서비스 모듈에는 전파가 안 된다. api로 넣어야 common-web을 의존하는 모든 서비스가 자동으로 이 라이브러리를 갖게 된다. 이 한 줄로 7개 서비스가 전부 /actuator/prometheus 엔드포인트를 갖게 됐다.</p>
+<h3>엔드포인트 노출도 켜야 했다</h3>
+<p>라이브러리가 클래스패스에 있는 것과, 실제로 그 엔드포인트가 열려있는 건 별개다. Actuator는 보안상 health, info 정도만 기본으로 열어두고, prometheus는 명시적으로 켜야 한다.</p>
+<pre><code class="language-yaml">- name: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
+  value: &quot;health,info,prometheus&quot;
+</code></pre>
+<p>각 서비스의 Deployment env에 이 한 줄을 추가했다.</p>
+<h2>Prometheus가 그 엔드포인트를 실제로 긁어가게 만들기</h2>
+<p>메트릭이 노출된다고 Prometheus가 저절로 찾아가는 건 아니다. ServiceMonitor라는 커스텀 리소스로 이 서비스를, 이 경로로, 이 주기마다 스크래핑하게 명시적으로 알려줘야 한다.</p>
+<pre><code class="language-yaml">apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: coupon-service
+  namespace: seatflow
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: coupon-service
+  namespaceSelector:
+    matchNames:
+      - seatflow
+  endpoints:
+    - port: management
+      path: /actuator/prometheus
+      interval: 15s
+</code></pre>
+<h3>Service의 두 라벨 필드를 헷갈렸다</h3>
+<p>ServiceMonitor를 만들고 며칠을 기다려도 Prometheus의 타겟 목록에 서비스가 안 보였다. Service, Endpoints, 네트워크 연결까지 하나하나 다 확인했는데 전부 정상이었다. Prometheus 파드 안에서 직접 curl로 접속해보면 메트릭이 잘 나왔다. 그런데도 타겟 목록엔 없었다.</p>
+<p>원인은 Kubernetes의 Service 오브젝트에 있는 두 개의 서로 다른 필드를 헷갈린 것이었다.</p>
+<pre><code class="language-yaml">apiVersion: v1
+kind: Service
+metadata:
+  name: coupon-service
+  # metadata.labels가 아예 없었다!
+spec:
+  selector:
+    app: coupon-service   # 이건 있었다
+</code></pre>
+<p>spec.selector는 이 Service가 어떤 파드로 트래픽을 보낼지 결정하는 필드다. metadata.labels는 이 Service 오브젝트 자체에 붙는 라벨이다. ServiceMonitor의 relabel 규칙은 후자(metadata.labels)를 보고 매칭하는데, 우리 service.yaml은 spec.selector만 있고 metadata.labels가 없었다. 이름이 둘 다 app: coupon-service로 값이 같아 보여서 처음엔 당연히 있는 줄 알았다.</p>
+<pre><code class="language-yaml">metadata:
+  labels:
+    app: coupon-service   # 이 한 줄이 빠져있었다
+spec:
+  selector:
+    app: coupon-service
+</code></pre>
+<p>이 한 줄을 추가하니 바로 해결됐다. 두 필드는 이름이 비슷하고 값도 같게 쓰는 경우가 많아서, 둘 다 있는 게 당연하다고 넘겨짚기 쉬운데, Kubernetes 입장에서는 완전히 다른 용도의 필드다.</p>
+<h2>Grafana에서의 시각화</h2>
+<p>Prometheus 타겟이 up 상태가 되고 나서, Grafana에서 대시보드를 만들었다.</p>
+<h3>처음엔 커뮤니티 대시보드를 가져오려고 했다</h3>
+<p>Grafana는 번호(ID)로 완성된 대시보드를 바로 가져올 수 있는 기능이 있다. Spring Boot + Micrometer용으로 유명한 대시보드(예: JVM Micrometer 대시보드)를 가져와봤는데, 모든 패널이 N/A로 나왔다.</p>
+<p>원인은 그 대시보드가 application이라는 라벨을 기준으로 필터링하도록 만들어져 있는데, 우리 메트릭에는 그 라벨이 없고 대신 job이 있었기 때문이다. 커뮤니티 대시보드는 만든 사람의 프로젝트에서 쓰던 라벨 컨벤션을 그대로 가정하고 있어서, 우리 환경과 100% 맞아떨어지는 경우가 거의 없다.</p>
+<p>이건 오히려 실무에서 흔히 겪는 정상적인 과정이다. 커뮤니티 대시보드를 그대로 쓰는 경우는 드물고, 보통 시작점으로 가져와서 라벨/쿼리를 프로젝트에 맞게 손보거나, 아니면 필요한 패널 몇 개만 직접 새로 만드는 쪽으로 간다. 지금처럼 필요한 지표가 10개 미만으로 명확할 때는, 후자(직접 만들기)가 오히려 더 빠르고 확실하다.</p>
+<h3>지표별로 적절한 시각화 타입을 골랐다</h3>
+<p>모든 지표를 라인 그래프(Time series) 하나로 통일해도 정보는 다 담기지만, 지표 성격에 따라 더 잘 맞는 시각화가 따로 있다.</p>
+<pre><code>Stat (숫자 카드): 지금 이 순간의 상태만 중요할 때 -&gt; 서비스 UP/DOWN
+Time series (라인 그래프): 시간에 따른 추이가 중요할 때 -&gt; 요청량, 에러율, 지연시간, CPU, GC
+Bar gauge (막대 게이지): 정해진 최대치 대비 지금 얼마나 찼는지가 중요할 때 -&gt; DB 커넥션풀, 메모리 사용률
+</code></pre>
+<p>처음엔 메모리/커넥션풀에 원형 Gauge를 썼는데, 서비스가 6개나 되니 하나의 패널 안에 원형 게이지 6개가 찌그러져 들어가면서 거의 안 보이는 문제가 생겼다. Bar gauge(막대 형태)로 바꾸니 여러 서비스 값을 세로로 나란히 놓고 비교하기 훨씬 편해졌다. 같은 한계 대비 현재값을 보여주는 목적이라도, 시계열이 여러 개일 때는 막대 형태가 원형보다 공간 효율이 좋다.</p>
+<h2>RED 메소드 순서로 배치</h2>
+<p>패널을 아무렇게나 늘어놓지 않고, 실제로 장애 대응할 때 훑는 순서로 배치했다.</p>
+<pre><code>맨 위: 서비스 헬스 (Stat, 6개 서비스 한 줄로)
+그 다음: 요청 처리량 / 에러율 / 응답 지연시간(p95) — 사용자가 직접 영향받는 지표
+그 다음: DB 커넥션풀 — 흔한 병목 지점
+맨 아래: JVM 힙 메모리 / GC / CPU / 스레드 수 — 플랫폼 상세 지표
+</code></pre>
+<p>이 순서 자체가 문제가 생겼을 때 원인을 좁혀가는 흐름이다. 사용자 영향(에러율, 지연시간)을 먼저 확인하고, 그 다음 인프라 병목(커넥션풀)을 보고, 마지막으로 플랫폼 상세(메모리, GC)를 파고드는 순서다.</p>
+<p><img src="/public/blog/data_img/grafana_dashboard.png" alt="대시보드"/></p>
+<h2>지금은 몇 가지 그래프가 비어있다</h2>
+<p>며칠 지나서 다시 확인해보니, 대부분의 패널은 이미 실제 값으로 채워져 있었다. up은 7개 서비스 전부 초록색으로 UP이고, JVM 힙 메모리 사용률도 서비스마다 34~70% 사이의 실제 값이 찍혔다. GC 소요 시간, CPU 사용률, 스레드 수도 시간에 따라 오르내리는 진짜 그래프가 그려졌고, DB 커넥션풀 사용률도 막대 형태로 정상적으로 나왔다(지금은 0%인데, 이건 트래픽이 없어서 커넥션을 실제로 안 쓰고 있다는 뜻이라 정상이다).</p>
+<p>근데 딱 세 개 요청 처리량(RPS), 에러율(5xx 비율), 응답 지연시간(p95)만 여전히 No data로 비어있다. 이건 버그가 아니라 정확히 예상했던 대로다. 이 셋은 전부 http_server_requests_seconds_count라는 같은 지표에서 나오는데, 이 지표는 진짜 HTTP 요청이 있어야만 시계열 자체가 생긴다. JVM 메모리나 CPU, 스레드 수는 애플리케이션이 그냥 떠 있기만 해도 계속 값이 나오는 지표라 시간이 지나며 자연스럽게 채워졌지만, 요청 관련 지표는 실제로 API를 호출하는 트래픽이 있어야만 채워진다.</p>
+<p>여기서 하나 다시 확인한 게 있다. /actuator/health 같은 액추에이터 경로 자체는 원래 http_server_requests_seconds_count 집계 대상에서 빠진다. 모니터링 시스템이 스스로를 확인하려고 보내는 헬스체크 요청까지 메트릭에 다 잡히면, 정작 보고 싶은 진짜 사용자 트래픽 통계가 그 노이즈에 오염되기 때문이다. 그러니 지금까지 헬스체크만 여러 번 호출해본 걸로는 이 세 패널이 채워질 수가 없었다. 실제 서비스가 쓰이기 시작하거나, 다음 편(k6 부하테스트)에서 진짜 요청을 대량으로 보내는 시점에 자동으로 채워질 부분이다.</p>
+<p>이 차이 자체가 흥미로웠다. 애플리케이션 자체의 생존 신호(메모리, CPU, 스레드)와 그 애플리케이션이 실제로 하는 일의 신호(요청, 에러, 지연시간)는 서로 다른 조건에서 채워진다는 걸 대시보드로 직접 확인한 셈이다. 전자는 서비스가 켜져 있기만 하면 항상 관찰 가능하지만, 후자는 관찰하려는 대상(트래픽) 자체가 없으면 아무리 오래 기다려도 비어있을 것으로 생각된다.</p>
+<hr/>
+<h1>클러스터 자체의 CPU 오버커밋</h1>
+<p>작업 도중 Grafana의 알림 목록에서 KubeCPUOvercommit이라는 경고를 발견했다. 찾아보니 클러스터 전체의 CPU requests 합계가, 컨트롤플레인 노드(가장 큰 노드) 하나가 죽었을 때 나머지 노드로 감당 가능한 양을 넘어서고 있었다. 원인을 namespace별로 뜯어보니 Elasticsearch(3개 노드 클러스터)가 압도적으로 큰 비중을 차지하고 있었고, 실제로 거의 안 쓰고 있어서 노드 수를 3개에서 1개로 줄여 여유를 만들었다. 이건 오늘 만든 파이프라인과는 별개의, 모니터링을 붙이는 과정에서 우연히 발견한 클러스터 전반의 이슈였다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>메트릭 노출(라이브러리)은 공통 모듈에 한 번만 넣으면 모든 서비스에 전파된다. implementation이 아니라 api로 넣어야 한다.</li>
+<li>Kubernetes의 Service에서 spec.selector와 metadata.labels는 이름이 비슷해 보여도 완전히 다른 필드다. ServiceMonitor는 후자를 본다.</li>
+<li>커뮤니티 대시보드는 라벨 컨벤션이 안 맞으면 그대로 못 쓴다. 지표 개수가 적으면 직접 만드는 게 오히려 빠르다.</li>
+<li>지표 성격(순간값 vs 추이 vs 한계 대비 현재치)에 맞춰 시각화 타입을 고르면, 같은 데이터도 훨씬 잘 읽힌다.</li>
+<li>액추에이터 헬스체크 같은 자기 자신을 향한 요청은 사용자 트래픽 통계에서 빠지는 게 정상이다.</li>
+</ul>
+<hr/>
+<h1>NEXT</h1>
+<p>20편에서는 여러 서비스를 넘나드는 요청 하나를 끝까지 추적하는 분산 트레이싱을 다룰 예정이다. 지금까지의 모니터링이 각 서비스가 지금 건강한지를 보는 거였다면, 분산 트레이싱은 이 요청 하나가 여러 서비스를 거치는 동안 정확히 어디서 시간이 걸렸는지를 보는 것이라 관점이 다르다고 생각한다.</p></article></div></div>
+  </body>
+</html>

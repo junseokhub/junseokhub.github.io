@@ -66,6 +66,12 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/post/Seatflow-19-Prometheus-Grafana-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/</loc>
+    <lastmod>2026-08-29</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/post/Seatflow-18-1-vault-transit-auto-unseal/</loc>
     <lastmod>2026-08-28</lastmod>
     <changefreq>monthly</changefreq>
