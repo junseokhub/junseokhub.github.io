@@ -6,6 +6,11 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/category/Think/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/category/Lab/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
@@ -56,14 +61,15 @@
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/category/Think/</loc>
+    <loc>https://junseokhub.github.io/blog/category/Lab/Coupon%26Order/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/category/Lab/Coupon%26Order/</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
+    <loc>https://junseokhub.github.io/blog/post/%EB%B8%94%EB%A1%9C%EA%B7%B8-%EC%9D%B4%EC%A0%84-%EB%81%9D/</loc>
+    <lastmod>2026-09-02</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
     <loc>https://junseokhub.github.io/blog/post/Seatflow-19-Prometheus-Grafana-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/</loc>
