@@ -6,6 +6,11 @@
     <priority>0.9</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/category/Devops/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/category/Think/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
@@ -17,11 +22,6 @@
   </url>
   <url>
     <loc>https://junseokhub.github.io/blog/category/Lab/SeatFlow/</loc>
-    <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://junseokhub.github.io/blog/category/Devops/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
@@ -64,6 +64,12 @@
     <loc>https://junseokhub.github.io/blog/category/Lab/Coupon%26Order/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://junseokhub.github.io/blog/post/%EA%B4%80%EC%B8%A1%EC%84%B1-3%EC%B6%95-%EB%A9%94%ED%8A%B8%EB%A6%AD-%EB%A1%9C%EA%B7%B8-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1/</loc>
+    <lastmod>2026-09-14</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
     <loc>https://junseokhub.github.io/blog/post/%EB%B8%94%EB%A1%9C%EA%B7%B8-%EC%9D%B4%EC%A0%84-%EB%81%9D/</loc>

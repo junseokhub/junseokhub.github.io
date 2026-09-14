@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>관측성 3축 (메트릭, 로그, 트레이싱) | Record, Then Build</title>
+    <meta name="description" content="Intro 운영 중에 문제가 생겼을 때, 로그만 보면서 원인을 찾으려니 한계가 있었다. 로그는 있는데 지금 시스템 전체가 얼마나 힘든 상태인지는 로그만으로 감이 잘 안 왔고, 반대로 전체적인 수치는 대시보드로 보이는데 정확히 어떤 요" />
+    <meta property="og:title" content="관측성 3축 (메트릭, 로그, 트레이싱) | Record, Then Build" />
+    <meta property="og:description" content="Intro 운영 중에 문제가 생겼을 때, 로그만 보면서 원인을 찾으려니 한계가 있었다. 로그는 있는데 지금 시스템 전체가 얼마나 힘든 상태인지는 로그만으로 감이 잘 안 왔고, 반대로 전체적인 수치는 대시보드로 보이는데 정확히 어떤 요" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EA%B4%80%EC%B8%A1%EC%84%B1-3%EC%B6%95-%EB%A9%94%ED%8A%B8%EB%A6%AD-%EB%A1%9C%EA%B7%B8-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EA%B4%80%EC%B8%A1%EC%84%B1-3%EC%B6%95-%EB%A9%94%ED%8A%B8%EB%A6%AD-%EB%A1%9C%EA%B7%B8-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-CzRacekY.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-sU7wtzJ7.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>관측성 3축 (메트릭, 로그, 트레이싱)</h1><p>Devops · 2026-09-14</p><h1>Intro</h1>
+<p>운영 중에 문제가 생겼을 때, 로그만 보면서 원인을 찾으려니 한계가 있었다. 로그는 있는데 지금 시스템 전체가 얼마나 힘든 상태인지는 로그만으로 감이 잘 안 왔고, 반대로 전체적인 수치는 대시보드로 보이는데 정확히 어떤 요청에서 뭐가 잘못됐는지는 그것만으로 알 수 없었다. 찾아보니 이 세 가지(메트릭, 로그, 트레이싱)가 관측성의 세 축이라고 불리고, 각자 다른 질문에 답하려고 존재하는 거였다.</p>
+<p>이 셋이 각각 뭘 답해주는지, 왜 하나로 통합이 안 되고 세 개로 나뉘어 있는지 정리해보려고 한다.</p>
+<hr/>
+<h1>세 가지로 나눈 이유</h1>
+<p>셋을 하나씩 보기 전에, 이 구분이 왜 필요한지부터 짚고 가는 게 좋을 것 같다. 셋은 다루는 데이터의 형태도, 답하는 질문도 다르다.</p>
+<ul>
+<li>메트릭
+<ul>
+<li>지금 시스템 상태가 전반적으로 어떤가? (숫자로 답함)</li>
+</ul>
+</li>
+<li>로그
+<ul>
+<li>정확히 무슨 일이 있었나? (개별 사건의 서술로 답함)</li>
+</ul>
+</li>
+<li>트레이싱
+<ul>
+<li>이 요청 하나가 어디를 거쳐서 어디서 느려졌나? (요청의 이동 경로로 답함)</li>
+</ul>
+</li>
+</ul>
+<p>하나로 합쳐서 다루면 될 것 같기도 한데, 실제로는 데이터의 성격이 너무 달라서 각자 최적화된 방식으로 따로 다뤄야 한다.</p>
+<hr/>
+<h1>메트릭 (Metric)</h1>
+<p>메트릭은 시간에 따라 변하는 숫자 값이다. 요청 수, 응답 시간, 에러율, CPU 사용량 같은 것들을 일정 주기로 측정해서 시계열로 쌓는다.</p>
+<pre><code class="language-java">@Service
+public class OrderService {
+
+    private final Counter orderCreatedCounter;
+    private final Timer orderProcessingTimer;
+
+    public void createOrder(OrderCommand cmd) {
+        orderProcessingTimer.record(() -&gt; {
+            // 주문 생성 로직
+            orderCreatedCounter.increment();
+        });
+    }
+}
+</code></pre>
+<pre><code class="language-bash">http_requests_total{status=&quot;200&quot;} 15234
+http_requests_total{status=&quot;500&quot;} 12
+http_request_duration_seconds{quantile=&quot;0.99&quot;} 0.85
+</code></pre>
+<p>메트릭의 장점은 가볍다. 개별 요청 하나하나를 다 기록하는 게 아니라 집계된 숫자만 남기기 때문에, 오래 보관해도 저장 비용이 크게 안 늘어난다. 그래서 최근 한 달간 에러율 추이처럼 장기 트렌드를 보거나, 임계치를 넘으면 알림을 보내는 용도에 잘 맞는다. 대신 집계된 숫자이다 보니 그 500 에러가 정확히 어떤 요청에서 났는지는 메트릭만으로 알 수 없다.</p>
+<hr/>
+<h1>로그 (Log)</h1>
+<p>로그는 특정 시점에 일어난 일을 서술로 기록한 것이다. 어떤 요청이 왔고, 어떤 예외가 났고, 어떤 값이었는지 같은 맥락이 다 담긴다.</p>
+<pre><code class="language-java">log.info(&quot;주문 생성 시작: orderId={}, userId={}&quot;, orderId, userId);
+log.error(&quot;결제 처리 실패: orderId={}, reason={}&quot;, orderId, e.getMessage(), e);
+</code></pre>
+<p>메트릭이 못 주는 구체적인 맥락을 로그가 채워준다. 이 특정 요청에서 정확히 무슨 값으로 뭐가 실패했는지는 로그를 봐야 알 수 있다. 대신 요청마다 다 기록하다 보니 양이 많고, 오래 보관하거나 방대한 로그 속에서 원하는 걸 검색하려면 그만큼 인프라 비용이 든다. 그리고 여러 서비스에 걸친 요청이라면, 각 서비스의 로그가 따로 남기 때문에 그 요청 하나를 처음부터 끝까지 따라가려면 흩어진 로그를 사람이 짜맞춰야 하는 문제도 있다.</p>
+<hr/>
+<h1>트레이싱 (Tracing)</h1>
+<p>트레이싱은 하나의 요청이 여러 서비스를 거치는 동안의 전체 경로를 추적한다. 요청이 시작될 때 고유한 추적 ID(trace ID)가 부여되고, 그 요청이 거치는 각 구간(span)마다 얼마나 걸렸는지가 기록된다.</p>
+<pre><code class="language-bash">[trace-id: abc123]
+  ㄴ span: API Gateway (2ms)
+      ㄴ span: Order Service (120ms)
+          ㄴ span: Inventory Service (95ms)   &lt;- 여기가 유독 오래 걸림
+          ㄴ span: Payment Service (15ms)
+</code></pre>
+<p>이 구조 덕분에 이 요청이 전체 120ms 중에 정확히 어느 서비스에서 95ms를 잡아먹었는지를 한눈에 볼 수 있다. 로그가 서비스별로 흩어져 있는 것과 다르게, 트레이싱은 같은 trace ID로 여러 서비스의 구간을 하나로 이어서 보여준다는 게 핵심이다. 여러 서비스로 나뉜 구조에서 어디가 병목인지 찾을 때 특히 유용하다. 다만 모든 요청을 다 추적하면 그만큼 오버헤드와 저장 비용이 커지기 때문에, 보통 일부 요청만 샘플링해서 추적하는 경우가 많다.</p>
+<hr/>
+<h1>셋이 어떻게 같이 쓰일까?</h1>
+<p>실제로 문제를 조사할 땐 이 셋을 순서대로 좁혀가며 쓰는 경우가 많은 것 같다.</p>
+<pre><code class="language-bash">1. 메트릭에서 이상 감지 (에러율이 갑자기 올라감 -&gt; 알림)
+2. 트레이싱으로 어느 서비스, 어느 구간에서 문제가 생겼는지 좁힘
+3. 그 구간에 해당하는 로그를 찾아서 정확한 원인 파악
+</code></pre>
+<p>메트릭이 뭔가 이상하다를 가장 먼저, 가장 가볍게 알려주고, 트레이싱이 어디가 이상한지를 좁혀주고, 로그가 정확히 왜 이상한지를 알려준다. 셋 중 하나만 있으면 이 흐름이 중간에 끊긴다.</p>
+<p>Spring 환경에서는 보통 Micrometer로 메트릭을, 구조화된 로깅 라이브러리로 로그를, Micrometer Tracing(과거 Spring Cloud Sleuth)이나 OpenTelemetry로 트레이싱을 각각 다룬다. 트레이싱을 실제로 어떻게 구현하고 여러 서비스에 걸쳐 연결하는지는 다루는 내용이 꽤 많아서 별도로 더 깊게 볼 만한 주제인 것 같다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>
+<p>메트릭</p>
+<ul>
+<li>숫자로 집계된 상태. 가볍고 장기 보관에 적합하지만 개별 요청의 맥락은 없다.</li>
+</ul>
+</li>
+<li>
+<p>로그</p>
+<ul>
+<li>개별 사건의 구체적인 서술. 맥락은 풍부하지만 양이 많고 서비스 간에 흩어진다.</li>
+</ul>
+</li>
+<li>
+<p>트레이싱</p>
+<ul>
+<li>요청 하나의 여러 서비스에 걸친 이동 경로. 병목을 찾는 데 강하지만 모든 요청을 다 추적하긴 부담스럽다.</li>
+</ul>
+</li>
+<li>
+<p>셋은 서로 대체하는 게 아니라, 문제를 좁혀가는 순서(메트릭 -&gt; 트레이싱 -&gt; 로그)로 함께 쓰인다.</p>
+</li>
+</ul>
+<p>로그 하나로 다 되는 줄 알았던 게 착각이었다. 시스템이 커지고 서비스가 여러 개로 나뉠수록, 지금 상태가 어떤지와 어디가 문제인지와 왜 문제인지를 각각 다른 도구로 답해야 한다는 걸 알게 됐다. 세 축을 다 갖추지 않으면, 문제가 생겼을 때 그중 하나가 빠진 채로 원인을 찾아야 하는 상황이 되는 것 같다.</p></article></div></div>
+  </body>
+</html>
