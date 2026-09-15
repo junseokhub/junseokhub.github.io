@@ -7,13 +7,13 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>관측성 3축 (메트릭, 로그, 트레이싱) | Record, Then Build</title>
+    <title>메트릭, 로그, 트레이싱 | Record, Then Build</title>
     <meta name="description" content="Intro 운영 중에 문제가 생겼을 때, 로그만 보면서 원인을 찾으려니 한계가 있었다. 로그는 있는데 지금 시스템 전체가 얼마나 힘든 상태인지는 로그만으로 감이 잘 안 왔고, 반대로 전체적인 수치는 대시보드로 보이는데 정확히 어떤 요" />
-    <meta property="og:title" content="관측성 3축 (메트릭, 로그, 트레이싱) | Record, Then Build" />
+    <meta property="og:title" content="메트릭, 로그, 트레이싱 | Record, Then Build" />
     <meta property="og:description" content="Intro 운영 중에 문제가 생겼을 때, 로그만 보면서 원인을 찾으려니 한계가 있었다. 로그는 있는데 지금 시스템 전체가 얼마나 힘든 상태인지는 로그만으로 감이 잘 안 왔고, 반대로 전체적인 수치는 대시보드로 보이는데 정확히 어떤 요" />
     <meta property="og:type" content="article" />
-    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EA%B4%80%EC%B8%A1%EC%84%B1-3%EC%B6%95-%EB%A9%94%ED%8A%B8%EB%A6%AD-%EB%A1%9C%EA%B7%B8-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1/" />
-    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EA%B4%80%EC%B8%A1%EC%84%B1-3%EC%B6%95-%EB%A9%94%ED%8A%B8%EB%A6%AD-%EB%A1%9C%EA%B7%B8-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1/" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EB%A9%94%ED%8A%B8%EB%A6%AD-%EB%A1%9C%EA%B7%B8-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EB%A9%94%ED%8A%B8%EB%A6%AD-%EB%A1%9C%EA%B7%B8-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1/" />
     <style>
       /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
       #root > .prerender-content { display: none; }
@@ -31,11 +31,11 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CzRacekY.js"></script>
+    <script type="module" crossorigin src="/assets/index-gc09xrpc.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-sU7wtzJ7.css">
   </head>
   <body>
-    <div id="root"><div class="prerender-content"><article><h1>관측성 3축 (메트릭, 로그, 트레이싱)</h1><p>Devops · 2026-09-14</p><h1>Intro</h1>
+    <div id="root"><div class="prerender-content"><article><h1>메트릭, 로그, 트레이싱</h1><p>Devops · 2026-09-14</p><h1>Intro</h1>
 <p>운영 중에 문제가 생겼을 때, 로그만 보면서 원인을 찾으려니 한계가 있었다. 로그는 있는데 지금 시스템 전체가 얼마나 힘든 상태인지는 로그만으로 감이 잘 안 왔고, 반대로 전체적인 수치는 대시보드로 보이는데 정확히 어떤 요청에서 뭐가 잘못됐는지는 그것만으로 알 수 없었다. 찾아보니 이 세 가지(메트릭, 로그, 트레이싱)가 관측성의 세 축이라고 불리고, 각자 다른 질문에 답하려고 존재하는 거였다.</p>
 <p>이 셋이 각각 뭘 답해주는지, 왜 하나로 통합이 안 되고 세 개로 나뉘어 있는지 정리해보려고 한다.</p>
 <hr/>
