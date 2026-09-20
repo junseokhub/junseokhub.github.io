@@ -66,6 +66,12 @@
     <priority>0.7</priority>
   </url>
   <url>
+    <loc>https://junseokhub.github.io/blog/post/%EB%B6%84%EC%82%B0-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1-OpenTelemetry-Trace-Span/</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://junseokhub.github.io/blog/post/%EB%A9%94%ED%8A%B8%EB%A6%AD-%EB%A1%9C%EA%B7%B8-%ED%8A%B8%EB%A0%88%EC%9D%B4%EC%8B%B1/</loc>
     <lastmod>2026-09-14</lastmod>
     <changefreq>monthly</changefreq>
