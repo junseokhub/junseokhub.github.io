@@ -31,7 +31,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-B6ZW0Vcl.js"></script>
+    <script type="module" crossorigin src="/assets/index-D6FB0xF5.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-sU7wtzJ7.css">
   </head>
   <body>
@@ -592,11 +592,24 @@ class BoundedCounterLincheckTest {
 <hr/>
 <h1>정리</h1>
 <ul>
-<li>동시성 테스트는 성능이 아니라 정합성을 검증한다. 합격 기준은 응답 시간이 아니라 불변식이다</li>
-<li>동시성 문제는 경합이 일어나는 레이어에 따라 잡는 도구가 다르다. JVM 안의 서비스 로직(레이어 1), 전체 요청 경로(레이어 2), 스레드 인터리빙(레이어 3), 분산 시스템 자체(레이어 4)</li>
+<li>동시성 테스트는 성능이 아니라 정합성을 검증한다. 합격 기준은 응답 시간이 아니라 불변식이다.</li>
+<li>동시성 문제는 경합이 일어나는 레이어에 따라 잡는 도구가 다르다.
+<ul>
+<li>JVM 안의 서비스 로직(레이어 1), 전체 요청 경로(레이어 2), 스레드 인터리빙(레이어 3), 분산 시스템 자체(레이어 4)</li>
+</ul>
+</li>
 <li>레이어 1은 ExecutorService + CountDownLatch가 기본값이다. 두 단계 latch로 출발을 맞추고, 결과는 <code>Future</code>로 모아야 예외가 숨지 않는다.</li>
-<li>레이어 2는 동시 출발 배리어가 있는지가 도구 선택의 핵심이다. Gatling(<code>rendezVous</code>)과 JMeter(Synchronizing Timer)는 배리어가 있고, k6와 Locust는 없다. Spring 프로젝트에는 Java DSL과 Gradle로 붙는 Gatling이 가장 자연스럽다.</li>
-<li>레이어 3은 반복 실행에 기대지 않고 실행 순서를 체계적으로 탐색한다. 락 없이 직접 짠 코드가 있다면 JCStress나 Lincheck이 필요하다.</li>
+<li>레이어 2는 동시 출발 배리어가 있는지가 도구 선택의 핵심이다.
+<ul>
+<li>Gatling(<code>rendezVous</code>)과 JMeter(Synchronizing Timer)는 배리어가 있고, k6와 Locust는 없다.</li>
+<li>Spring 프로젝트에는 Java DSL과 Gradle로 붙는 Gatling이 가장 자연스럽다.</li>
+</ul>
+</li>
+<li>레이어 3은 반복 실행에 기대지 않고 실행 순서를 체계적으로 탐색한다.
+<ul>
+<li>락 없이 직접 짠 코드가 있다면 JCStress나 Lincheck이 필요하다.</li>
+</ul>
+</li>
 <li>모든 레이어에서 예상된 실패를 성공으로 세고, 모든 대기에 타임아웃을 걸고, 실제 DB 위에서 검증해야 테스트 자체가 거짓말을 하지 않는다.</li>
 </ul>
 <p>동시성 제어 코드를 짜는 것만큼, 그걸 제대로 검증하는 테스트를 짜는 게 어렵다는 걸 알게 됐다. 테스트가 통과했다는 사실보다, 그 테스트가 정말로 요청을 동시에 몰아넣었는지, 그리고 실패를 숨기고 있지는 않은지를 먼저 의심해보는 게 순서인 것 같다.</p>
