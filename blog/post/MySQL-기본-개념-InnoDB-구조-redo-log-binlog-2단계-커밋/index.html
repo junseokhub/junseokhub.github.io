@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>MySQL 기본 개념 (InnoDB 구조, redo log, binlog, 2단계 커밋) | Record, Then Build</title>
+    <meta name="description" content="Intro 복제, GTID, 장애 대응을 공부하려고 보니 계속 같은 단어들이 나왔다. binlog, redo log, 버퍼 풀, 2단계 커밋. 대충 로그 파일이겠거니 하고 넘어가면, 복제가 왜 어긋나는지, 크래시 후에 왜 데이터가 사" />
+    <meta property="og:title" content="MySQL 기본 개념 (InnoDB 구조, redo log, binlog, 2단계 커밋) | Record, Then Build" />
+    <meta property="og:description" content="Intro 복제, GTID, 장애 대응을 공부하려고 보니 계속 같은 단어들이 나왔다. binlog, redo log, 버퍼 풀, 2단계 커밋. 대충 로그 파일이겠거니 하고 넘어가면, 복제가 왜 어긋나는지, 크래시 후에 왜 데이터가 사" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/MySQL-%EA%B8%B0%EB%B3%B8-%EA%B0%9C%EB%85%90-InnoDB-%EA%B5%AC%EC%A1%B0-redo-log-binlog-2%EB%8B%A8%EA%B3%84-%EC%BB%A4%EB%B0%8B/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/MySQL-%EA%B8%B0%EB%B3%B8-%EA%B0%9C%EB%85%90-InnoDB-%EA%B5%AC%EC%A1%B0-redo-log-binlog-2%EB%8B%A8%EA%B3%84-%EC%BB%A4%EB%B0%8B/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-CXUnNFex.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>MySQL 기본 개념 (InnoDB 구조, redo log, binlog, 2단계 커밋)</h1><p>Database/RDB · 2026-10-04</p><h1>Intro</h1>
+<p>복제, GTID, 장애 대응을 공부하려고 보니 계속 같은 단어들이 나왔다. binlog, redo log, 버퍼 풀, 2단계 커밋. 대충 로그 파일이겠거니 하고 넘어가면, 복제가 왜 어긋나는지, 크래시 후에 왜 데이터가 사라지는지를 설명할 수가 없었다.</p>
+<p>그래서 이번엔 MySQL이 커밋을 어떻게 디스크에 남기는지부터 직접 들여다보려고 한다. 개념을 읽고 끝내는 게 아니라, 쿠버네티스 위에 실험용 MySQL을 띄워서 버퍼 풀의 dirty page가 줄어드는 걸 보고, redo log의 LSN이 올라가는 걸 보고, binlog를 직접 디코딩하고, 마지막엔 mysqld를 강제로 죽여서 설정에 따라 커밋이 정말 사라지는지 확인해볼 거다.</p>
+<p>각 실험은 가설, 절차, 관찰, 결과 순서로 정리했고, 결과 표의 측정값 칸은 직접 돌려서 채우도록 비워뒀다.</p>
+<hr/>
+<h1>실험 환경 구축</h1>
+<p>쿠버네티스 클러스터에 실험 전용 네임스페이스를 만들고, MySQL 8.4를 StatefulSet 하나로 띄운다. 스토리지는 Longhorn을 쓴다.</p>
+<h2>매니페스트</h2>
+<pre><code class="language-yaml"># lab-mysql.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-mysql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  namespace: lab-mysql
+data:
+  lab.cnf: |
+    [mysqld]
+    server_id = 1
+    innodb_buffer_pool_size = 256M
+    binlog_expire_logs_seconds = 604800
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: lab-mysql
+spec:
+  clusterIP: None
+  selector:
+    app: mysql
+  ports:
+    - name: mysql
+      port: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: lab-mysql
+spec:
+  serviceName: mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      shareProcessNamespace: true   # 크래시 실험에서 mysqld에 kill -9을 보내기 위해 필요 (뒤에서 설명)
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-root
+                  key: password
+            - name: MYSQL_DATABASE
+              value: lab
+          ports:
+            - name: mysql
+              containerPort: 3306
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: [&quot;bash&quot;, &quot;-c&quot;, &quot;mysqladmin ping -uroot -p\&quot;$MYSQL_ROOT_PASSWORD\&quot; --silent&quot;]
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+            - name: config
+              mountPath: /etc/mysql/conf.d
+      volumes:
+        - name: config
+          configMap:
+            name: mysql-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [&quot;ReadWriteOnce&quot;]
+        storageClassName: longhorn
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: lab-mysql
+spec:
+  containers:
+    - name: client
+      image: mysql:8.4           # mysql 클라이언트를 쓰기 위해 같은 이미지 사용
+      command: [&quot;sleep&quot;, &quot;infinity&quot;]
+      env:
+        - name: PW
+          valueFrom:
+            secretKeyRef:
+              name: mysql-root
+              key: password
+</code></pre>
+<p><code>client</code> 파드는 부하를 거는 쪽이다. 크래시 실험에서 서버 파드를 죽여도 클라이언트 쪽 기록이 남아 있어야 해서 분리했다.</p>
+<h2>배포</h2>
+<pre><code class="language-bash">kubectl create namespace lab-mysql
+kubectl create secret generic mysql-root -n lab-mysql --from-literal=password=labroot
+kubectl apply -f lab-mysql.yaml
+
+kubectl get pod -n lab-mysql -w   # mysql-0이 READY 1/1이 될 때까지 대기
+</code></pre>
+<h2>접속용 헬퍼</h2>
+<p>실험마다 <code>kubectl exec</code> 명령이 길어지니까, 셸 함수 두 개를 만들어두고 쓴다.</p>
+<pre><code class="language-bash"># 대화형 세션 (터미널 두 개를 띄워야 하는 실험에서 사용)
+msh() {
+  kubectl exec -it -n lab-mysql mysql-0 -c mysql -- \
+    bash -c &#x27;mysql -uroot -p&quot;$MYSQL_ROOT_PASSWORD&quot; lab&#x27;
+}
+
+# 표준 입력으로 SQL을 받아 실행
+msql() {
+  kubectl exec -i -n lab-mysql mysql-0 -c mysql -- \
+    bash -c &#x27;mysql -uroot -p&quot;$MYSQL_ROOT_PASSWORD&quot; -t lab 2&gt;/dev/null&#x27;
+}
+</code></pre>
+<pre><code class="language-bash">echo &quot;SELECT VERSION();&quot; | msql
+</code></pre>
+<h2>실험 데이터</h2>
+<pre><code class="language-bash">msql &lt;&lt;&#x27;SQL&#x27;
+CREATE TABLE item (
+  id    BIGINT AUTO_INCREMENT PRIMARY KEY,
+  name  VARCHAR(100) NOT NULL,
+  price INT NOT NULL
+);
+
+SET SESSION cte_max_recursion_depth = 1000000;
+INSERT INTO item (name, price)
+WITH RECURSIVE seq AS (
+  SELECT 1 AS n UNION ALL SELECT n + 1 FROM seq WHERE n &lt; 500000
+)
+SELECT CONCAT(&#x27;item-&#x27;, n), n % 10000 FROM seq;
+
+SELECT COUNT(*) FROM item;
+SQL
+</code></pre>
+<h2>정리</h2>
+<p>실험이 끝나면 네임스페이스째 지운다. PVC도 네임스페이스 소속이라 같이 지워지고, Longhorn의 기본 회수 정책(Delete)이면 볼륨도 삭제된다.</p>
+<pre><code class="language-bash">kubectl delete namespace lab-mysql
+kubectl get pv | grep lab-mysql   # 남은 볼륨이 없는지 확인
+</code></pre>
+<hr/>
+<h1>서버 레이어와 스토리지 엔진</h1>
+<p>MySQL은 크게 두 레이어로 나뉜다.</p>
+<pre><code class="language-bash">[서버 레이어]    커넥션 처리, SQL 파싱, 옵티마이저, binlog     &lt;- 엔진과 무관한 공통 영역
+    ㅣ
+[스토리지 엔진]  실제 데이터 저장, 트랜잭션, 락, redo/undo log  &lt;- InnoDB
+</code></pre>
+<p>SQL을 해석하고 실행 계획을 짜는 건 서버 레이어고, 데이터를 실제로 디스크에 저장하고 트랜잭션을 보장하는 건 스토리지 엔진이다. 엔진은 플러그인처럼 바꿔 끼울 수 있다.</p>
+<pre><code class="language-bash">echo &quot;SHOW ENGINES;&quot; | msql
+</code></pre>
+<p><code>InnoDB</code>가 <code>DEFAULT</code>로 표시될 거다. 이 구분이 중요한 이유는, 뒤에 나오는 두 로그가 서로 다른 레이어 소속이기 때문이다. redo log는 InnoDB의 것이고, binlog는 서버 레이어의 것이다. 소속이 다르니 목적도 다르고, 그래서 둘을 어긋나지 않게 맞추는 별도의 장치가 필요해진다.</p>
+<hr/>
+<h1>버퍼 풀</h1>
+<p>InnoDB는 데이터를 16KB 단위의 페이지로 관리한다. 데이터를 읽거나 바꿀 때 디스크를 매번 직접 건드리지 않고, 페이지를 메모리의 버퍼 풀로 올려서 거기서 읽고 쓴다. 메모리에서 수정됐지만 아직 디스크에 반영되지 않은 페이지를 dirty page라고 부르고, 이건 백그라운드에서 천천히 디스크로 내려보낸다(flush).</p>
+<p>커밋할 때 바뀐 페이지를 매번 디스크에 쓰지 않는 이유는, 페이지 쓰기가 디스크의 여기저기에 흩어진 랜덤 I/O라서 느리기 때문이다.</p>
+<h2>dirty page가 쌓였다가 줄어드는 걸 관찰하기</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>대량 UPDATE 직후에는 dirty page가 크게 늘어나고, 커밋이 끝난 뒤에도 한동안 남아 있다가 백그라운드 flush로 서서히 줄어든다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash"># 1. 현재 dirty page 수
+echo &quot;SHOW GLOBAL STATUS LIKE &#x27;Innodb_buffer_pool_pages_dirty&#x27;;&quot; | msql
+
+# 2. 전체 행 UPDATE (커밋까지 끝남)
+echo &quot;UPDATE item SET price = price + 1;&quot; | msql
+
+# 3. 직후부터 5초 간격으로 dirty page 수를 관찰
+for i in $(seq 1 12); do
+  echo &quot;SHOW GLOBAL STATUS LIKE &#x27;Innodb_buffer_pool_pages_dirty&#x27;;&quot; | msql | grep dirty
+  sleep 5
+done
+</code></pre>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>UPDATE는 이미 커밋됐는데도 dirty page가 바로 0이 되지 않는다. 즉 커밋이 끝났다는 게 데이터 페이지가 디스크에 쓰였다는 뜻이 아니다.</li>
+</ul>
+</li>
+</ul>
+<table><thead><tr><th>시점</th><th>예상</th><th>측정값</th></tr></thead><tbody><tr><td>UPDATE 전</td><td>0에 가까움</td><td></td></tr><tr><td>UPDATE 직후</td><td>수천 페이지</td><td></td></tr><tr><td>30초 후</td><td>줄어드는 중</td><td></td></tr><tr><td>60초 후</td><td>0에 가까워짐</td><td></td></tr></tbody></table>
+<p>그렇다면 여기서 질문이 생긴다. 커밋은 끝났는데 데이터 페이지는 아직 메모리에만 있다. 이 순간 서버가 죽으면 그 커밋은 어떻게 살아남을까. 그 답이 redo log다.</p>
+<hr/>
+<h1>커밋을 살아남게 하는 장치(redo log)</h1>
+<p>InnoDB는 페이지를 디스크에 쓰기 전에, 무엇을 바꿨는지를 먼저 redo log에 순서대로 기록한다. 이걸 WAL(Write-Ahead Logging)이라고 부른다. redo log는 파일 끝에 계속 이어 붙이는 순차 쓰기라서 페이지를 여기저기 쓰는 것보다 훨씬 빠르다.</p>
+<pre><code class="language-bash">커밋 -&gt; redo log에 변경 내용 기록 (순차 쓰기, 빠름)   &lt;- 여기까지 되면 커밋 성공
+     -&gt; 버퍼 풀의 dirty page는 나중에 천천히 flush (랜덤 쓰기, 느림)
+</code></pre>
+<p>서버가 죽어도 redo log만 디스크에 남아 있으면, 재시작할 때 redo log를 다시 적용해서(crash recovery) 아직 flush 안 된 페이지의 변경을 복원할 수 있다.</p>
+<p>redo log는 위치를 LSN(Log Sequence Number)이라는 계속 증가하는 숫자로 표현한다. 그리고 dirty page가 디스크에 flush되고 나면 그 지점까지의 redo log는 더 이상 복구에 필요 없어지는데, 이 기준점을 checkpoint라고 한다. redo log는 정해진 크기 안에서 checkpoint 이전 영역을 재사용하는 원형 구조다.</p>
+<h2>LSN과 checkpoint의 간격 보기</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>쓰기가 일어나면 LSN은 즉시 올라가고, checkpoint는 dirty page flush를 따라 뒤늦게 올라간다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash"># redo log 파일 확인 (8.0.30부터 #innodb_redo 디렉토리 아래 여러 파일로 관리)
+kubectl exec -n lab-mysql mysql-0 -c mysql -- ls -la &#x27;/var/lib/mysql/#innodb_redo&#x27;
+echo &quot;SELECT @@innodb_redo_log_capacity / 1024 / 1024 AS redo_mb;&quot; | msql
+
+# LSN 관련 값만 추려보는 함수
+lsn() {
+  echo &quot;SHOW ENGINE INNODB STATUS\G&quot; | msql | grep -E &quot;Log sequence number|Log flushed up to|Last checkpoint at&quot;
+}
+
+lsn
+echo &quot;UPDATE item SET price = price + 1 WHERE id &lt;= 200000;&quot; | msql
+lsn          # 직후
+sleep 30
+lsn          # 30초 후
+</code></pre>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>UPDATE 직후 <code>Log sequence number</code>와 <code>Log flushed up to</code>는 같이 올라가 있는데(커밋 시점에 redo가 디스크로 flush됐다는 뜻), <code>Last checkpoint at</code>은 한참 뒤처져 있다. 시간이 지나면서 checkpoint가 따라붙는다. 이 둘 사이의 간격이 크래시가 나면 redo log로 복구해야 하는 구간이다.</li>
+</ul>
+</li>
+</ul>
+<table><thead><tr><th>항목</th><th>UPDATE 전</th><th>직후</th><th>30초 후</th></tr></thead><tbody><tr><td>Log sequence number</td><td></td><td></td><td></td></tr><tr><td>Log flushed up to</td><td></td><td></td><td></td></tr><tr><td>Last checkpoint at</td><td></td><td></td><td></td></tr></tbody></table>
+<p><code>innodb_redo_log_capacity</code>(기본 100MB)가 너무 작으면 checkpoint가 LSN을 따라잡으려고 dirty page를 급하게 flush해야 해서 쓰기 성능이 튄다. 쓰기가 많은 서버에서 이 값을 키우는 이유가 이거다.</p>
+<hr/>
+<h1>undo log와 MVCC</h1>
+<p>redo log가 바꾼 뒤의 값을 기록한다면, undo log는 바꾸기 전의 값을 기록한다. 두 가지 용도로 쓰인다.</p>
+<ul>
+<li>롤백
+<ul>
+<li>트랜잭션을 취소하면 undo log로 원래 값을 되돌린다.</li>
+</ul>
+</li>
+<li>MVCC(다중 버전 동시성 제어)
+<ul>
+<li>다른 트랜잭션이 값을 바꿨어도, 먼저 시작한 트랜잭션은 undo log를 따라가서 자기가 시작한 시점의 값을 읽는다. 그래서 읽기가 쓰기를 기다리지 않는다.</li>
+</ul>
+</li>
+</ul>
+<h2>긴 트랜잭션이 undo log를 붙잡는 걸 보기</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>오래된 스냅샷을 보고 있는 트랜잭션이 열려 있으면, 그동안 쌓인 undo log를 지울 수 없어서 <code>History list length</code>가 계속 늘어난다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+<ul>
+<li>터미널 두 개에서 각각 <code>msh</code>로 접속한다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-sql">-- [세션 A] 스냅샷을 잡고 열어둔다
+START TRANSACTION WITH CONSISTENT SNAPSHOT;
+SELECT price FROM item WHERE id = 1;
+</code></pre>
+<pre><code class="language-sql">-- [세션 B] 값을 바꾸고 커밋
+UPDATE item SET price = 99999 WHERE id = 1;
+SELECT price FROM item WHERE id = 1;   -- 99999
+</code></pre>
+<pre><code class="language-sql">-- [세션 A] 같은 조회를 다시
+SELECT price FROM item WHERE id = 1;   -- 여전히 예전 값. undo log를 따라가서 읽은 것
+</code></pre>
+<p>이제 세션 A를 열어둔 채로, 작은 트랜잭션을 많이 만들어서 undo log를 쌓는다.</p>
+<pre><code class="language-sql">-- [세션 B]
+DELIMITER //
+CREATE PROCEDURE many_updates(IN cnt INT)
+BEGIN
+  DECLARE i INT DEFAULT 0;
+  WHILE i &lt; cnt DO
+    UPDATE item SET price = price + 1 WHERE id = 1 + (i % 1000);  -- autocommit이라 문장마다 커밋
+    SET i = i + 1;
+  END WHILE;
+END //
+DELIMITER ;
+
+CALL many_updates(20000);
+</code></pre>
+<pre><code class="language-bash"># [다른 터미널] History list length 확인
+echo &quot;SHOW ENGINE INNODB STATUS\G&quot; | msql | grep &quot;History list length&quot;
+
+# 지금 열려 있는 트랜잭션과 경과 시간
+echo &quot;SELECT trx_id, trx_started, TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS sec FROM information_schema.INNODB_TRX;&quot; | msql
+</code></pre>
+<pre><code class="language-sql">-- [세션 A] 이제 트랜잭션 종료
+COMMIT;
+</code></pre>
+<pre><code class="language-bash">sleep 10
+echo &quot;SHOW ENGINE INNODB STATUS\G&quot; | msql | grep &quot;History list length&quot;
+</code></pre>
+<table><thead><tr><th>시점</th><th>예상</th><th>측정값</th></tr></thead><tbody><tr><td>세션 A 열기 전</td><td>작은 값</td><td></td></tr><tr><td><code>many_updates(20000)</code> 후 (A 열린 상태)</td><td>수만 단위로 증가</td><td></td></tr><tr><td>A 커밋 후 10초</td><td>purge로 급감</td><td></td></tr></tbody></table>
+<p>세션 A 하나가 조회만 하고 있었을 뿐인데, 그 사이 다른 트랜잭션들이 만든 undo log를 전부 지우지 못하고 붙잡고 있었다. 운영에서 누가 트랜잭션을 열어두고 퇴근하면, undo 공간이 계속 커지고 조회도 긴 undo 체인을 따라가느라 느려진다. <code>INNODB_TRX</code>로 오래된 트랜잭션을 주기적으로 감시하는 이유가 여기 있다.</p>
+<hr/>
+<h1>서버 레이어의 변경 기록(bin log)</h1>
+<p>binlog는 서버 레이어가 남기는 로그로, 데이터를 바꾼 모든 변경을 커밋 순서대로 기록한다. redo log와 비슷해 보이지만 목적이 완전히 다르다. redo log는 크래시 복구용이고, binlog는 다른 서버로 변경을 전달하는 용도다. 복제에서 replica가 받아가는 게 binlog고, 특정 시점까지 복구할 때 백업 위에 다시 적용하는 것도 binlog다.</p>
+<p>MySQL 8.x에서는 binlog가 기본으로 켜져 있다.</p>
+<pre><code class="language-bash">echo &quot;SHOW VARIABLES LIKE &#x27;log_bin%&#x27;; SHOW BINARY LOGS; SHOW BINARY LOG STATUS;&quot; | msql
+</code></pre>
+<p>8.4부터는 예전의 <code>SHOW MASTER STATUS</code>가 제거되고 <code>SHOW BINARY LOG STATUS</code>로 바뀌었다.</p>
+<h2>binlog 포맷</h2>
+<p>binlog에 무엇을 적느냐에 따라 포맷이 세 가지다.</p>
+<ul>
+<li>STATEMENT
+<ul>
+<li>실행한 SQL 문장을 그대로 기록한다. 작지만, 같은 SQL이라도 서버마다 결과가 달라질 수 있는 문장(<code>LIMIT</code> without <code>ORDER BY</code>, <code>UUID()</code>, <code>NOW()</code> 일부)이 있으면 replica의 데이터가 어긋날 수 있다.</li>
+</ul>
+</li>
+<li>ROW
+<ul>
+<li>바뀐 행 자체를 바꾸기 전과 후의 값으로 기록한다. 결과가 항상 같지만, 한 문장이 많은 행을 바꾸면 그만큼 커진다.</li>
+</ul>
+</li>
+<li>MIXED
+<ul>
+<li>평소엔 STATEMENT, 위험한 문장만 ROW로 기록한다.</li>
+</ul>
+</li>
+</ul>
+<p>기본값은 ROW고, 사실상 표준이다. <code>binlog_format</code> 변수 자체가 8.0.34부터 deprecated라서, 앞으로는 ROW만 남는 방향이다.</p>
+<h2>binlog를 직접 디코딩해보기</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>ROW 포맷은 바뀐 행의 이전 값과 이후 값을 행 단위로 남기고, STATEMENT 포맷은 SQL 문장을 남긴다. STATEMENT 포맷에서 결과가 비결정적인 문장은 경고를 남긴다.</li>
+</ul>
+</li>
+<li>
+<p>절차 (ROW)</p>
+</li>
+</ul>
+<pre><code class="language-bash"># 새 binlog 파일로 전환해서 이후 기록만 깔끔하게 보기
+echo &quot;FLUSH BINARY LOGS; SHOW BINARY LOG STATUS;&quot; | msql   # File 컬럼의 파일명을 확인
+
+echo &quot;UPDATE item SET price = price + 1 WHERE id &lt;= 3;&quot; | msql
+
+# 위에서 확인한 파일명으로 디코딩
+kubectl exec -n lab-mysql mysql-0 -c mysql -- \
+  mysqlbinlog --base64-output=DECODE-ROWS -vv /var/lib/mysql/binlog.000003
+</code></pre>
+<p><code>mysqlbinlog</code>를 쓸 수 없는 환경이라면 SQL로도 이벤트 목록은 볼 수 있다. 다만 행 내용은 디코딩되지 않는다.</p>
+<pre><code class="language-bash">echo &quot;SHOW BINLOG EVENTS IN &#x27;binlog.000003&#x27;;&quot; | msql
+</code></pre>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>출력에서 이런 부분들을 찾아본다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-bash">SET @@SESSION.GTID_NEXT= &#x27;ANONYMOUS&#x27;      &lt;- 이 트랜잭션의 식별자 (GTID를 안 켜서 익명)
+### UPDATE `lab`.`item`
+### WHERE
+###   @1=1                                &lt;- 바꾸기 전 값 (id)
+###   @3=...                              &lt;- 바꾸기 전 price
+### SET
+###   @3=...                              &lt;- 바꾼 뒤 price
+... (id 2, 3도 같은 형태로 반복)
+Xid = 1234                                &lt;- 트랜잭션 식별자, 뒤의 2단계 커밋에서 중요
+COMMIT
+</code></pre>
+<p>UPDATE 한 문장이었는데 binlog에는 행 3개가 각각 이전 값과 이후 값으로 남아 있다. 그리고 트랜잭션마다 <code>GTID_NEXT= &#x27;ANONYMOUS&#x27;</code>가 붙어 있는데, GTID를 켜면 여기에 전역 고유 ID가 들어간다. 복제에서 이 식별자가 왜 결정적인지는 GTID를 다룰 때 따로 볼 주제다.</p>
+<p>절차 (STATEMENT와 비결정적 문장):</p>
+<pre><code class="language-bash">msql &lt;&lt;&#x27;SQL&#x27;
+SET SESSION binlog_format = &#x27;STATEMENT&#x27;;
+FLUSH BINARY LOGS;
+UPDATE item SET price = price + 1 WHERE id &lt;= 3;
+UPDATE item SET price = 0 LIMIT 1;
+SHOW WARNINGS;
+SET SESSION binlog_format = &#x27;ROW&#x27;;
+SQL
+</code></pre>
+<ul>
+<li>관찰 포인트
+<ul>
+<li><code>LIMIT</code>이 있는 UPDATE에서 unsafe statement 경고가 나온다. <code>ORDER BY</code> 없는 <code>LIMIT 1</code>은 어떤 행을 고를지가 서버마다 달라질 수 있어서, source와 replica가 서로 다른 행을 바꿀 수 있다는 경고다. 새 binlog 파일을 디코딩해보면 ROW 때와 달리 SQL 문장이 그대로 들어 있다.</li>
+</ul>
+</li>
+</ul>
+<table><thead><tr><th>확인 항목</th><th>예상</th><th>관찰 결과</th></tr></thead><tbody><tr><td>ROW에서 UPDATE 1문장이 남긴 행 이벤트 수</td><td>3</td><td></td></tr><tr><td>STATEMENT에서 남은 형태</td><td>SQL 원문</td><td></td></tr><tr><td><code>LIMIT 1</code> 문장의 경고</td><td>Unsafe statement</td><td></td></tr></tbody></table>
+<hr/>
+<h1>redo log와 binlog, 왜 둘 다 필요할까?</h1>
+<p>여기까지 오면 비슷한 로그가 왜 두 개나 있는지 의문이 든다. 둘은 목적도, 소속도, 수명도 다르다.</p>
+<table><thead><tr><th></th><th>redo log</th><th>binlog</th></tr></thead><tbody><tr><td>소속</td><td>InnoDB (스토리지 엔진)</td><td>서버 레이어</td></tr><tr><td>기록 내용</td><td>페이지에 대한 물리적 변경</td><td>행 또는 SQL 단위의 논리적 변경</td></tr><tr><td>목적</td><td>크래시 복구</td><td>복제, 시점 복구</td></tr><tr><td>수명</td><td>checkpoint 이후 재사용되는 원형 구조</td><td>계속 쌓이고, 보관 기간이 지나면 삭제</td></tr><tr><td>다른 엔진에서</td><td>없음 (InnoDB 전용)</td><td>엔진과 무관하게 기록</td></tr></tbody></table>
+<p>redo log는 InnoDB 내부에서만 의미가 있고 금방 덮어써져서 다른 서버로 보낼 수 없다. binlog는 엔진과 무관한 논리적 기록이라 복제에 쓸 수 있지만, 페이지 단위 크래시 복구에는 쓸 수 없다. 그래서 둘 다 필요하다.</p>
+<hr/>
+<h1>두 로그를 어긋나지 않게 (2단계 커밋)</h1>
+<p>문제는 두 로그가 따로 기록된다는 점이다. 커밋 하나에 대해 redo log에는 남았는데 binlog에는 안 남았거나, 그 반대가 되면 어떻게 될까.</p>
+<pre><code class="language-bash">redo에만 있고 binlog에 없음 -&gt; source에는 데이터가 있는데 replica에는 영원히 안 넘어감
+binlog에만 있고 redo에 없음 -&gt; source는 크래시 복구 후 데이터가 없는데 replica에는 있음
+</code></pre>
+<p>어느 쪽이든 source와 replica의 데이터가 어긋난다. MySQL은 이걸 막으려고 내부적으로 2단계 커밋(2PC)을 쓴다.</p>
+<pre><code class="language-bash">1. prepare  : InnoDB가 트랜잭션을 prepare 상태로 redo log에 기록
+2. binlog   : 트랜잭션 전체를 binlog에 기록 (끝에 Xid가 붙는다)
+3. commit   : InnoDB가 redo log에 commit을 표시
+</code></pre>
+<p>크래시 후 복구할 때는 redo log에서 prepare 상태로 남아 있는 트랜잭션을 찾아서, 그 트랜잭션의 Xid가 binlog에 있으면 커밋하고, 없으면 롤백한다. binlog를 기준으로 판단하기 때문에, 복구가 끝나면 InnoDB의 데이터와 binlog가 항상 같은 트랜잭션 집합을 갖게 된다. 실험 4에서 봤던 <code>Xid = ...</code>가 바로 이 판단에 쓰이는 값이다.</p>
+<p>그런데 이 보장에는 전제가 있다. prepare 기록과 binlog 기록이 실제로 디스크에 도달해 있어야 한다. 이걸 결정하는 게 다음 두 설정이다. 그리고 커밋마다 디스크 fsync를 두 번씩 하면 느리니까, MySQL은 여러 트랜잭션의 binlog 쓰기와 fsync를 한 번에 묶어서 처리하는 group commit으로 이 비용을 나눠 낸다.</p>
+<hr/>
+<h1>내구성 설</h1>
+<h2>innodb_flush_log_at_trx_commit</h2>
+<p>redo log를 커밋 시점에 어디까지 내려보낼지 정한다.</p>
+<table><thead><tr><th>값</th><th>커밋 시 동작</th><th>mysqld만 죽으면</th><th>OS나 전원이 죽으면</th></tr></thead><tbody><tr><td>1 (기본)</td><td>redo를 쓰고 fsync까지</td><td>유실 없음</td><td>유실 없음</td></tr><tr><td>2</td><td>redo를 OS 캐시에 쓰기만, fsync는 약 1초마다</td><td>유실 없음 (OS 캐시는 살아있음)</td><td>최대 약 1초 유실</td></tr><tr><td>0</td><td>아무것도 안 함, 쓰기와 fsync 모두 약 1초마다</td><td>최대 약 1초 유실</td><td>최대 약 1초 유실</td></tr></tbody></table>
+<h2>sync_binlog</h2>
+<p>binlog를 언제 fsync할지 정한다.</p>
+<table><thead><tr><th>값</th><th>동작</th></tr></thead><tbody><tr><td>1 (기본)</td><td>커밋(group commit 단위)마다 fsync</td></tr><tr><td>0</td><td>fsync를 OS에 맡김</td></tr><tr><td>N</td><td>N번의 group commit마다 fsync</td></tr></tbody></table>
+<p>둘 다 1인 조합을 흔히 이중 1(double 1) 설정이라고 부르고, 복제 환경에서 커밋 유실과 source/replica 불일치를 막는 기본값이다. 값을 낮추면 커밋이 빨라지는 대신, 어떤 장애에서 무엇을 잃는지가 달라진다. 이걸 두 개의 실험으로 직접 확인해본다.</p>
+<h2>설정별 커밋 비용 측정</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>fsync를 커밋마다 하는 설정일수록 커밋이 느리다. 특히 Longhorn처럼 fsync가 네트워크 너머 복제본까지 거치는 스토리지에서는 차이가 크게 난다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+<ul>
+<li>커넥션 하나로 5000건을 한 건씩 커밋하면서 시간을 잰다. 한 연결 안에서 보내야 클라이언트 프로세스를 띄우는 비용이 섞이지 않는다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-bash">echo &quot;CREATE TABLE commit_test (id BIGINT AUTO_INCREMENT PRIMARY KEY, seq INT NOT NULL);&quot; | msql
+
+run_commit_test() {
+  echo &quot;SET GLOBAL innodb_flush_log_at_trx_commit = $1; SET GLOBAL sync_binlog = $2; TRUNCATE TABLE commit_test;&quot; | msql
+  kubectl exec -n lab-mysql client -- bash -c &#x27;
+    time (seq 1 5000 \
+      | sed &quot;s/.*/INSERT INTO commit_test (seq) VALUES (&amp;);/&quot; \
+      | mysql -h mysql-0.mysql -uroot -p&quot;$PW&quot; lab 2&gt;/dev/null)&#x27;
+}
+
+run_commit_test 1 1
+run_commit_test 1 0
+run_commit_test 2 0
+run_commit_test 0 0
+
+# 끝나면 기본값으로 복구
+echo &quot;SET GLOBAL innodb_flush_log_at_trx_commit = 1; SET GLOBAL sync_binlog = 1;&quot; | msql
+</code></pre>
+<table><thead><tr><th>flush_log_at_trx_commit</th><th>sync_binlog</th><th>예상</th><th>소요 시간</th><th>초당 커밋 수</th></tr></thead><tbody><tr><td>1</td><td>1</td><td>가장 느림</td><td></td><td></td></tr><tr><td>1</td><td>0</td><td>조금 빨라짐</td><td></td><td></td></tr><tr><td>2</td><td>0</td><td>크게 빨라짐</td><td></td><td></td></tr><tr><td>0</td><td>0</td><td>가장 빠름</td><td></td><td></td></tr></tbody></table>
+<ul>
+<li>더 해볼 것
+<ul>
+<li>클러스터에 <code>local-path</code> 스토리지 클래스도 있으니, 매니페스트의 <code>storageClassName</code>을 <code>local-path</code>로 바꾼 StatefulSet을 하나 더 띄워서 같은 측정을 해보면 좋다. 같은 이중 1 설정이라도 스토리지가 fsync를 얼마나 빨리 끝내주느냐에 따라 커밋 처리량이 크게 달라진다는 걸 볼 수 있다.</li>
+</ul>
+</li>
+</ul>
+<h2>mysqld를 강제로 죽였을 때 커밋이 사라지는지</h2>
+<ul>
+<li>가설
+<ul>
+<li>이중 1이면, 클라이언트가 성공 응답을 받은 커밋은 크래시 후에도 전부 남아 있고, 테이블과 binlog의 트랜잭션 수가 일치한다.</li>
+<li><code>innodb_flush_log_at_trx_commit = 2</code>여도 mysqld만 죽는 크래시에서는 유실이 없다. (OS 캐시는 살아 있으니까)</li>
+<li><code>innodb_flush_log_at_trx_commit = 0</code>이면 성공 응답을 받은 커밋이 사라질 수 있고, binlog는 fsync됐는데 InnoDB는 잃어버린 트랜잭션이 생겨 테이블과 binlog가 어긋날 수 있다.</li>
+</ul>
+</li>
+</ul>
+<p>왜 shareProcessNamespace가 필요한가: 컨테이너 안에서 mysqld는 원래 PID 1로 뜬다. 리눅스는 PID 네임스페이스의 1번 프로세스를 보호해서, 같은 네임스페이스 안에서 보내는 SIGKILL을 무시한다. 그래서 <code>kubectl exec</code>로 <code>kill -9 1</code>을 보내도 mysqld가 안 죽는다. <code>shareProcessNamespace: true</code>를 켜면 파드의 pause 컨테이너가 PID 1이 되고 mysqld는 다른 PID를 받아서, 안에서 <code>kill -9</code>로 죽일 수 있다. <code>kubectl delete pod</code>는 SIGTERM으로 정상 종료를 먼저 시도하기 때문에 크래시 실험이 되지 않는다.</p>
+<ul>
+<li>절차</li>
+</ul>
+<pre><code class="language-bash">echo &quot;CREATE TABLE crash_test (id BIGINT AUTO_INCREMENT PRIMARY KEY, seq INT NOT NULL);&quot; | msql
+echo &quot;SELECT @@pid_file;&quot; | msql   # mysqld PID 파일 경로 확인 (보통 /var/run/mysqld/mysqld.pid)
+
+run_crash_test() {
+  # 1. 설정 적용 + 이전 기록 초기화 (SET GLOBAL은 재시작하면 초기화되니 매번 다시 설정)
+  #    RESET BINARY LOGS AND GTIDS는 binlog를 전부 지운다. 실험 환경에서만 쓸 것
+  echo &quot;SET GLOBAL innodb_flush_log_at_trx_commit = $1; SET GLOBAL sync_binlog = $2;
+        TRUNCATE TABLE crash_test; RESET BINARY LOGS AND GTIDS;&quot; | msql
+
+  # 2. 클라이언트: INSERT가 커밋되고 나면 SELECT로 번호를 출력 -&gt; 출력된 번호가 곧 성공 응답을 받은 커밋
+  kubectl exec -n lab-mysql client -- bash -c &#x27;
+    seq 1 10000000 \
+      | sed &quot;s/.*/INSERT INTO crash_test (seq) VALUES (&amp;); SELECT &amp;;/&quot; \
+      | mysql -h mysql-0.mysql -uroot -p&quot;$PW&quot; lab -N -n &gt; /tmp/ack.log 2&gt;/dev/null&#x27; &amp;
+
+  # 3. 10초 동안 쓰다가 mysqld를 강제로 죽인다
+  sleep 10
+  kubectl exec -n lab-mysql mysql-0 -c mysql -- bash -c &#x27;kill -9 $(cat /var/run/mysqld/mysqld.pid)&#x27;
+  wait
+
+  # 4. 컨테이너가 재시작되고 crash recovery가 끝날 때까지 대기
+  sleep 5
+  kubectl wait -n lab-mysql --for=condition=Ready pod/mysql-0 --timeout=180s
+
+  # 5. 세 숫자 비교
+  echo &quot;마지막 성공 응답:  $(kubectl exec -n lab-mysql client -- tail -1 /tmp/ack.log)&quot;
+  echo &quot;테이블 행 수:     $(echo &#x27;SELECT COUNT(*) FROM crash_test;&#x27; | msql | grep -Eo &#x27;[0-9]+&#x27; | tail -1)&quot;
+  echo &quot;binlog 행 수:     $(kubectl exec -n lab-mysql mysql-0 -c mysql -- bash -c \
+      &quot;mysqlbinlog --base64-output=DECODE-ROWS -vv /var/lib/mysql/binlog.[0-9]* 2&gt;/dev/null | grep &#x27;### INSERT&#x27; | grep -c crash_test&quot;)&quot;
+}
+
+run_crash_test 1 1
+run_crash_test 2 1
+run_crash_test 0 1
+</code></pre>
+<p><code>kubectl get pod -n lab-mysql</code>로 보면 <code>mysql-0</code>의 RESTARTS가 올라가 있을 거다. 파드가 새로 만들어진 게 아니라 같은 파드 안에서 컨테이너만 재시작된 거라, 볼륨의 redo log와 binlog를 그대로 가지고 crash recovery를 한다. 재시작 후 로그에서 복구 과정을 볼 수도 있다.</p>
+<pre><code class="language-bash">kubectl logs -n lab-mysql mysql-0 -c mysql | grep -iE &quot;recovery|crash&quot;
+</code></pre>
+<table><thead><tr><th>flush_log_at_trx_commit</th><th>sync_binlog</th><th>마지막 성공 응답</th><th>테이블 행 수</th><th>binlog 행 수</th><th>예상</th></tr></thead><tbody><tr><td>1</td><td>1</td><td></td><td></td><td></td><td>행 수 ≥ 성공 응답, 행 수 = binlog</td></tr><tr><td>2</td><td>1</td><td></td><td></td><td></td><td>위와 같음 (mysqld 크래시에서는 유실 없음)</td></tr><tr><td>0</td><td>1</td><td></td><td></td><td></td><td>행 수 &lt; 성공 응답 가능, 행 수 ≠ binlog 가능</td></tr></tbody></table>
+<p>테이블 행 수가 성공 응답보다 한 건 많은 건 정상이다. 커밋은 됐는데 그 성공 응답이 클라이언트에 도착하기 전에 서버가 죽은 경우다. 문제가 되는 건 반대로 행 수가 성공 응답보다 적을 때다. 클라이언트는 커밋 성공을 받았는데 데이터가 없는 거고, 사용자 입장에서는 결제 완료를 봤는데 주문이 사라진 상황이다.</p>
+<p>이 실험으로 못 보는 것: <code>innodb_flush_log_at_trx_commit = 2</code>나 <code>sync_binlog = 0</code>이 실제로 데이터를 잃는 건 mysqld가 아니라 OS나 전원이 죽을 때다. 이걸 재현하려면 노드를 강제로 재부팅해야 하는데, 다른 서비스가 함께 돌고 있는 클러스터에서는 하지 않는 게 맞다. 표의 설명대로, 이 두 설정은 OS 장애에서 약 1초치를 잃을 수 있다는 것까지만 기억해두면 된다.</p>
+<hr/>
+<h1>정리</h1>
+<ul>
+<li>MySQL은 SQL을 처리하는 서버 레이어와 데이터를 저장하는 스토리지 엔진(InnoDB)으로 나뉜다. redo log는 InnoDB 소속, binlog는 서버 레이어 소속이다.</li>
+<li>데이터는 버퍼 풀에서 바뀌고, 커밋이 끝나도 dirty page는 한참 뒤에 디스크로 내려간다.</li>
+<li>그 사이 크래시를 버티게 해주는 게 redo log다. 변경을 먼저 순차적으로 기록해두고(WAL), 크래시 후 이걸로 복구한다. LSN과 checkpoint 사이가 복구해야 하는 구간이다.</li>
+<li>undo log는 바꾸기 전 값을 남겨서 롤백과 MVCC를 가능하게 한다. 긴 트랜잭션 하나가 undo log 전체를 붙잡을 수 있다.</li>
+<li>binlog는 복제와 시점 복구를 위한 서버 레이어의 변경 기록이고, ROW 포맷이 표준이다.</li>
+<li>두 로그가 어긋나면 source와 replica가 달라지기 때문에, MySQL은 2단계 커밋으로 binlog를 기준으로 커밋 여부를 판단한다.</li>
+<li>그 보장은 로그가 실제로 디스크에 닿았을 때만 성립한다. <code>innodb_flush_log_at_trx_commit = 1</code>, <code>sync_binlog = 1</code>이 그걸 보장하는 설정이고, 값을 낮추면 속도를 얻는 대신 특정 장애에서 커밋을 잃는다.</li>
+</ul>
+<p>커밋이 성공했다는 응답이 곧 데이터가 안전하다는 뜻이라고 막연히 믿고 있었는데, 그 믿음이 성립하려면 로그 두 개가 올바른 순서로 디스크에 닿아야 한다는 걸 알게 됐다. 그리고 이 binlog가 트랜잭션 단위로 다른 서버에 전달되는 게 복제의 전부라서, 여기서 본 binlog의 트랜잭션 식별자가 다음에 볼 GTID로 그대로 이어진다.</p>
+<blockquote>
+<p>참고: <a href="https://dev.mysql.com/doc/refman/8.4/en/binary-log.html">MySQL 8.4 Reference Manual — The Binary Log</a>
+참고: <a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html">MySQL 8.4 Reference Manual — Redo Log</a>
+참고: <a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-multi-versioning.html">MySQL 8.4 Reference Manual — InnoDB Multi-Versioning</a>
+참고: <a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html">MySQL 8.4 Reference Manual — InnoDB Startup Options and System Variables</a>
+참고: <a href="https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html">MySQL 8.4 Reference Manual — Binary Logging Options and Variables</a>
+참고: <a href="https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/">Kubernetes — Share Process Namespace between Containers in a Pod</a></p>
+</blockquote></article></div></div>
+  </body>
+</html>
