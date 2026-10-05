@@ -31,7 +31,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CydCLkcr.js"></script>
+    <script type="module" crossorigin src="/assets/index-DFi6p9SB.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
   </head>
   <body>
@@ -316,11 +316,12 @@ Redis / Kafka -&gt; 순차면 정리, 병렬이면 prefix·고유 식별자로 �
 <li>Redis, Kafka, 목, 시간, 스프링 컨텍스트 캐시도 공유 상태다. DB만 격리해서는 끝나지 않는다.</li>
 </ul>
 <p>처음엔 테스트가 가끔 실패하는 걸 테스트 환경이 불안정해서라고 생각했는데, 대부분은 테스트끼리 상태를 공유하고 있어서였다. 격리 전략은 하나를 고르는 문제가 아니라, 테스트 종류와 병렬화 방식에 맞춰 조합하는 문제인 것 같다.</p>
-<blockquote>
-<p>참고: <a href="https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/tx.html">Spring Framework — Testing: Transaction Management</a>
-참고: <a href="https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/ctx-management/caching.html">Spring Framework — Testing: Context Caching</a>
-참고: <a href="https://junit.org/junit5/docs/current/user-guide/#writing-tests-parallel-execution">JUnit 5 User Guide — Parallel Execution</a>
-참고: <a href="https://docs.gradle.org/current/userguide/java_testing.html">Gradle — Testing in Java &amp; JVM projects</a></p>
-</blockquote></article></div></div>
+<h1>참고</h1>
+<ul>
+<li><a href="https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/tx.html">Spring Framework — Testing: Transaction Management</a></li>
+<li><a href="https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/ctx-management/caching.html">Spring Framework — Testing: Context Caching</a></li>
+<li><a href="https://junit.org/junit5/docs/current/user-guide/#writing-tests-parallel-execution">JUnit 5 User Guide — Parallel Execution</a></li>
+<li><a href="https://docs.gradle.org/current/userguide/java_testing.html">Gradle — Testing in Java &amp; JVM projects</a></li>
+</ul></article></div></div>
   </body>
 </html>

@@ -31,7 +31,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CydCLkcr.js"></script>
+    <script type="module" crossorigin src="/assets/index-DFi6p9SB.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
   </head>
   <body>
@@ -584,8 +584,8 @@ run_crash_test 0 1
 <li>그 보장은 로그가 실제로 디스크에 닿았을 때만 성립한다. <code>innodb_flush_log_at_trx_commit = 1</code>, <code>sync_binlog = 1</code>이 그걸 보장하는 설정이고, 값을 낮추면 속도를 얻는 대신 특정 장애에서 커밋을 잃는다.</li>
 </ul>
 <p>커밋이 성공했다는 응답이 곧 데이터가 안전하다는 뜻이라고 막연히 믿고 있었는데, 그 믿음이 성립하려면 로그 두 개가 올바른 순서로 디스크에 닿아야 한다는 걸 알게 됐다. 그리고 이 binlog가 트랜잭션 단위로 다른 서버에 전달되는 게 복제의 전부라서, 여기서 본 binlog의 트랜잭션 식별자가 다음에 볼 GTID로 그대로 이어진다.</p>
+<h1>참고</h1>
 <blockquote>
-<p>참고</p>
 <ul>
 <li><a href="https://dev.mysql.com/doc/refman/8.4/en/binary-log.html">MySQL 8.4 Reference Manual — The Binary Log</a></li>
 <li><a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html">MySQL 8.4 Reference Manual — Redo Log</a></li>

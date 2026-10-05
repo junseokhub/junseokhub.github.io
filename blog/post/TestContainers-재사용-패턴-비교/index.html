@@ -32,7 +32,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CydCLkcr.js"></script>
+    <script type="module" crossorigin src="/assets/index-DFi6p9SB.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
   </head>
   <body>
@@ -158,7 +158,7 @@ class ContainerConfiguration {
 </code></pre>
 <p>이 방식은 조합의 자유도가 가장 높다는 게 장점인 것 같다. 다만 인터페이스에 <code>static</code> 필드로 선언하는 방식이다 보니, 필드 초기화 시점이나 인터페이스 여러 개를 동시에 구현했을 때 초기화 순서 같은 부분은 클래스 상속보다 살짝 덜 직관적으로 느껴질 수 있다.</p>
 <blockquote>
-<p><strong>중요한 내용</strong> <code>@ImportTestcontainers</code>를 썼다고 해서 무조건 Spring이 생명주기를 관리해주는 게 아니다. 공식 문서에 정확히 이렇게 나와 있다.
+<p>중요한 내용 <code>@ImportTestcontainers</code>를 썼다고 해서 무조건 Spring이 생명주기를 관리해주는 게 아니다. 공식 문서에 정확히 이렇게 나와 있다.
 Testcontainers가 제공하는 애노테이션과 확장(<code>@Testcontainers</code>, <code>@Container</code>)을 함께 썼다면, 생명주기는 전적으로 Testcontainers가 관리한다.
 즉, 인터페이스에 선언된 필드에 <code>@Container</code>가 붙어 있고, 테스트 클래스에 <code>@Testcontainers</code> 확장까지 같이 붙였다면, <code>@ImportTestcontainers</code>를 썼어도 상속하는 방법과 똑같이 클래스 단위로 껐다 켜는 생명주기를 그대로 물려받는다. 그러면 상속하는 방법에서 짚었던 Context Caching 어긋남이 인터페이스 방식에서도 똑같이 재현될 수 있다. <code>@ImportTestcontainers</code>의 진짜 이점(Spring이 관리하는 안전한 생명주기)을 온전히 받으려면, 테스트 클래스에 <code>@Testcontainers</code> 확장 애노테이션을 같이 붙이지 않아야 한다.
 정리하면, 어떤 방식을 쓰든 결국 Context Caching의 규칙을 깨뜨리지 않는 구조여야 한다는 원칙 하나로 귀결된다. 상속이든 인터페이스든, 생명주기를 Testcontainers 확장에 맡기는 순간 이 위험을 안고 가는 거고, 생명주기를 Spring(정적 초기화 블록 + <code>@ServiceConnection</code>, <code>@Bean</code>, 또는 <code>@Testcontainers</code> 없는 <code>@ImportTestcontainers</code>)에 맡기면 이 위험에서 벗어난다.</p>
@@ -203,36 +203,50 @@ dependencies {
 <p><code>testFixtures(project(...))</code>라는 게 핵심이다. 그냥 <code>project(&quot;:libs:test-support&quot;)</code>라고만 쓰면 그 모듈의 <code>main</code> 소스셋(운영 코드)을 가져오는 거고, <code>testFixtures(...)</code>로 감싸야 그 모듈의 testFixtures 아티팩트를 가져온다. 그리고 이걸 받는 쪽에서 <code>testImplementation</code>으로 선언했으니, 이 모듈의 <code>test</code> 소스셋 안에서만 그 컨테이너 인터페이스를 쓸 수 있게 되는 거다.</p>
 <h2>유의할 점</h2>
 <ul>
-<li><strong><code>java-test-fixtures</code> 플러그인은 컨테이너를 두는 모듈에 적용해야 한다.</strong> 쓰는 쪽 모듈에는 이 플러그인이 필요 없고, 그냥 <code>testFixtures(project(...))</code>로 의존성만 추가하면 된다</li>
-<li><strong>버전 정합성을 이 모듈이 책임지게 된다.</strong> 여러 서비스 모듈이 다 이 공유 모듈에 기대므로, Testcontainers나 Spring Boot 버전을 올릴 때 이 모듈 하나만 바꾸면 전체에 반영된다는 장점이 있지만, 반대로 이 모듈이 프로젝트 전체의 병목이 될 수도 있다</li>
-<li><strong>컨테이너 생명주기 원칙은 그대로 적용된다.</strong> 공유 모듈에 인터페이스 컴포지션으로 정의해뒀다고 해도, 앞서 짚은 Context Caching 문제(<code>@Testcontainers</code>/<code>@Container</code>를 어떻게 조합하느냐)는 똑같이 적용된다. 여러 서비스 모듈이 같은 정의를 가져다 쓰는 거라, 이 정의 하나가 잘못돼 있으면 그 문제가 모든 소비 모듈에 그대로 퍼진다</li>
+<li><code>java-test-fixtures</code> 플러그인은 컨테이너를 두는 모듈에 적용해야 한다.
+<ul>
+<li>쓰는 쪽 모듈에는 이 플러그인이 필요 없고, 그냥 <code>testFixtures(project(...))</code>로 의존성만 추가하면 된다.</li>
+</ul>
+</li>
+<li>버전 정합성을 이 모듈이 책임지게 된다.
+<ul>
+<li>여러 서비스 모듈이 다 이 공유 모듈에 기대므로, Testcontainers나 Spring Boot 버전을 올릴 때 이 모듈 하나만 바꾸면 전체에 반영된다는 장점이 있지만, 반대로 이 모듈이 프로젝트 전체의 병목이 될 수도 있다</li>
+</ul>
+</li>
+<li>컨테이너 생명주기 원칙은 그대로 적용된다.
+<ul>
+<li>공유 모듈에 인터페이스 컴포지션으로 정의해뒀다고 해도, 앞서 짚은 Context Caching 문제(<code>@Testcontainers</code>/<code>@Container</code>를 어떻게 조합하느냐)는 똑같이 적용된다. 여러 서비스 모듈이 같은 정의를 가져다 쓰는 거라, 이 정의 하나가 잘못돼 있으면 그 문제가 모든 소비 모듈에 그대로 퍼진다.</li>
+</ul>
+</li>
 </ul>
 <hr/>
 <h1>그래서 뭐가 좋은걸까?</h1>
 <p>찾아본 바로는 이렇게 정리되는 것 같다.</p>
 <ul>
-<li><strong>상속 방식</strong>은 역사적으로 가장 오래되고 널리 퍼진 방법이라, 예제나 블로그 글에서 여전히 제일 많이 보인다. 구현이 직관적이라 처음 배우기엔 좋다.</li>
-<li><strong>Spring Bean 방식</strong>은 공식 문서가 명시적으로 우선 권장하는 방법이다. 특히 애플리케이션 빈이 컨테이너 기능에 실제로 의존하는 상황(연결이 끊기면 안 되는 경우)이라면 이쪽이 생명주기 보장 면에서 제일 안전하다.</li>
-<li><strong>인터페이스 컴포지션</strong>은 비교적 최근에 공식 문서에 정식으로 실린 패턴이고, 여러 컨테이너를 유연하게 조합해야 하는 프로젝트에서 점점 더 많이 채택되는 것 같다. 자바가 다중 상속을 지원하지 않는다는 근본적인 제약을 생각하면, 컨테이너 종류가 늘어날수록 상속보다 이쪽이 구조적으로 더 유리해 보인다.</li>
+<li>상속 방식은 역사적으로 가장 오래되고 널리 퍼진 방법이라, 예제나 블로그 글에서 여전히 제일 많이 보인다. 구현이 직관적이라 처음 배우기엔 좋다.</li>
+<li>Spring Bean 방식은 공식 문서가 명시적으로 우선 권장하는 방법이다. 특히 애플리케이션 빈이 컨테이너 기능에 실제로 의존하는 상황(연결이 끊기면 안 되는 경우)이라면 이쪽이 생명주기 보장 면에서 제일 안전하다.</li>
+<li>인터페이스 컴포지션은 비교적 최근에 공식 문서에 정식으로 실린 패턴이고, 여러 컨테이너를 유연하게 조합해야 하는 프로젝트에서 점점 더 많이 채택되는 것 같다. 자바가 다중 상속을 지원하지 않는다는 근본적인 제약을 생각하면, 컨테이너 종류가 늘어날수록 상속보다 이쪽이 구조적으로 더 유리해 보인다.</li>
 </ul>
 <p>결국 세 방식 다 공식적으로 문서화 된 방법이라는 것이다. 다만, 공식 문서가 미는 최신 방식이 항상 모든 상황에 우월한 건 아닌 것 같다. Spring 컨텍스트 없이 순수 Testcontainers만으로 동작한다는 특성은 상속과 인터페이스를 사용하는 방법 둘 다 공유하는 지점이고, 이건 Spring Bean 방법에는 없는 특징이다. 정답이 하나로 정해져 있다기보다는, Spring을 꼭 써야 하는지, 프로젝트가 컨테이너를 몇 종류나 쓰는지, 애플리케이션 빈이 그 컨테이너에 얼마나 밀접하게 의존하는지에 따라 고르면 될 것 같다.</p>
 <hr/>
 <h1>정리</h1>
 <ul>
 <li>매번 새로 띄우는 기본형은 테스트 클래스가 늘어날수록 반복 기동 비용이 쌓인다.</li>
-<li><strong>상속</strong>은 직관적이지만 자바의 단일 상속 제약 때문에 유연성이 떨어지고, <code>@Testcontainers</code>/<code>@Container</code> 애노테이션과 같이 쓰면 안 된다는 함정이 있다.</li>
-<li>**Spring Bean(전역 공유)**은 생명주기가 Spring 컨텍스트에 명시적으로 묶여서 가장 안전하지만, 진짜 공유 여부는 Spring의 테스트 컨텍스트 캐싱 규칙에 달려있다.</li>
-<li><strong>인터페이스 컴포지션</strong>은 여러 컨테이너를 자유롭게 조합할 수 있고, Spring Boot 공식 문서에도 나온 정식 패턴이다.</li>
+<li>상속은 직관적이지만 자바의 단일 상속 제약 때문에 유연성이 떨어지고, <code>@Testcontainers</code>/<code>@Container</code> 애노테이션과 같이 쓰면 안 된다는 함정이 있다.</li>
+<li>Spring Bean(전역 공유)은 생명주기가 Spring 컨텍스트에 명시적으로 묶여서 가장 안전하지만, 진짜 공유 여부는 Spring의 테스트 컨텍스트 캐싱 규칙에 달려있다.</li>
+<li>인터페이스 컴포지션은 여러 컨테이너를 자유롭게 조합할 수 있고, Spring Boot 공식 문서에도 나온 정식 패턴이다.</li>
 <li><code>withReuse(true)</code>는 이 세 패턴과 별개로, 테스트 실행이 끝나도 컨테이너를 살려두는 실험적 옵션이다. -&gt; CI에는 부적합</li>
 </ul>
 <p>결국 세 방식 다 컨테이너를 어떻게 여러 테스트가 같이 쓰게 만들 것인가라는 같은 문제를 다른 자바 기능(상속, DI, 인터페이스)으로 푼 것뿐이라, 프로젝트 상황에 맞게 고르면 되는 것 같다.</p>
+<h1>참고</h1>
 <blockquote>
-<p>참고
-<a href="https://testcontainers.com/guides/testcontainers-container-lifecycle/">Testcontainers container lifecycle management using JUnit 5</a>
-<a href="https://spring.io/blog/2023/06/23/improved-testcontainers-support-in-spring-boot-3-1/">Improved Testcontainers Support in Spring Boot 3.1</a>
-<a href="https://docs.gradle.org/current/userguide/java_testing.html">Gradle 공식 문서 — Testing in Java &amp; JVM projects (Test Fixtures)</a>
-<a href="https://docs.spring.io/spring-boot/reference/testing/testcontainers.html">Spring Boot 공식 문서 — Service Connections</a>
-<a href="https://docs.spring.io/spring-boot/api/java/org/springframework/boot/testcontainers/service/connection/ServiceConnection.html">ServiceConnection API 문서</a></p>
+<ul>
+<li><a href="https://testcontainers.com/guides/testcontainers-container-lifecycle/">Testcontainers container lifecycle management using JUnit 5</a></li>
+<li><a href="https://spring.io/blog/2023/06/23/improved-testcontainers-support-in-spring-boot-3-1/">Improved Testcontainers Support in Spring Boot 3.1</a></li>
+<li><a href="https://docs.gradle.org/current/userguide/java_testing.html">Gradle 공식 문서 — Testing in Java &amp; JVM projects (Test Fixtures)</a></li>
+<li><a href="https://docs.spring.io/spring-boot/reference/testing/testcontainers.html">Spring Boot 공식 문서 — Service Connections</a></li>
+<li><a href="https://docs.spring.io/spring-boot/api/java/org/springframework/boot/testcontainers/service/connection/ServiceConnection.html">ServiceConnection API 문서</a></li>
+</ul>
 </blockquote></article></div></div>
   </body>
 </html>
