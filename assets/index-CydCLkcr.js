@@ -3480,12 +3480,13 @@ kubectl logs -n lab-mysql mysql-0 -c mysql | grep -iE "recovery|crash"
 
 커밋이 성공했다는 응답이 곧 데이터가 안전하다는 뜻이라고 막연히 믿고 있었는데, 그 믿음이 성립하려면 로그 두 개가 올바른 순서로 디스크에 닿아야 한다는 걸 알게 됐다. 그리고 이 binlog가 트랜잭션 단위로 다른 서버에 전달되는 게 복제의 전부라서, 여기서 본 binlog의 트랜잭션 식별자가 다음에 볼 GTID로 그대로 이어진다.
 
-> 참고: [MySQL 8.4 Reference Manual — The Binary Log](https://dev.mysql.com/doc/refman/8.4/en/binary-log.html)
-> 참고: [MySQL 8.4 Reference Manual — Redo Log](https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html)
-> 참고: [MySQL 8.4 Reference Manual — InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.4/en/innodb-multi-versioning.html)
-> 참고: [MySQL 8.4 Reference Manual — InnoDB Startup Options and System Variables](https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html)
-> 참고: [MySQL 8.4 Reference Manual — Binary Logging Options and Variables](https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html)
-> 참고: [Kubernetes — Share Process Namespace between Containers in a Pod](https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/)`,oH=`---
+> 참고
+> - [MySQL 8.4 Reference Manual — The Binary Log](https://dev.mysql.com/doc/refman/8.4/en/binary-log.html)
+> - [MySQL 8.4 Reference Manual — Redo Log](https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html)
+> - [MySQL 8.4 Reference Manual — InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.4/en/innodb-multi-versioning.html)
+> - [MySQL 8.4 Reference Manual — InnoDB Startup Options and System Variables](https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html)
+> - [MySQL 8.4 Reference Manual — Binary Logging Options and Variables](https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html)
+> - [Kubernetes — Share Process Namespace between Containers in a Pod](https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/)`,oH=`---
 date: 2026-08-24T22:31:18+09:00
 title: API Gateway 비교 (Ingress vs Kong vs Spring Cloud Gateway)
 ---
@@ -14996,12 +14997,13 @@ CI에서 매번 돌리는 건 레이어 1과 레이어 3이다. 둘 다 JUnit이
 
 동시성 제어 코드를 짜는 것만큼, 그걸 제대로 검증하는 테스트를 짜는 게 어렵다는 걸 알게 됐다. 테스트가 통과했다는 사실보다, 그 테스트가 정말로 요청을 동시에 몰아넣었는지, 그리고 실패를 숨기고 있지는 않은지를 먼저 의심해보는 게 순서인 것 같다.
 
-> 참고: [Gatling Gradle Plugin](https://docs.gatling.io/integrations/build-tools/gradle-plugin/)
-> 참고: [Gradle Plugin Portal — io.gatling.gradle](https://plugins.gradle.org/plugin/io.gatling.gradle)
-> 참고: [Gradle Plugin Portal — io.github.reyerizo.gradle.jcstress](https://plugins.gradle.org/plugin/io.github.reyerizo.gradle.jcstress)
-> 참고: [Lincheck GitHub](https://github.com/JetBrains/lincheck)
-> 참고: [Lincheck 공식 가이드 (Kotlin 문서)](https://kotlinlang.org/docs/introduction.html)
-> 참고: [nGrinder Docker Hub](https://hub.docker.com/r/ngrinder/controller)`,WH=`---
+> 참고
+> - [Gatling Gradle Plugin](https://docs.gatling.io/integrations/build-tools/gradle-plugin/)
+> - [Gradle Plugin Portal — io.gatling.gradle](https://plugins.gradle.org/plugin/io.gatling.gradle)
+> - [Gradle Plugin Portal — io.github.reyerizo.gradle.jcstress](https://plugins.gradle.org/plugin/io.github.reyerizo.gradle.jcstress)
+> - [Lincheck GitHub](https://github.com/JetBrains/lincheck)
+> - [Lincheck 공식 가이드 (Kotlin 문서)](https://kotlinlang.org/docs/introduction.html)
+> - [nGrinder Docker Hub](https://hub.docker.com/r/ngrinder/controller)`,WH=`---
 date: 2026-09-26T22:28:24+09:00
 title: 부하 테스트와 장애 주입
 ---
