@@ -32,7 +32,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-DFi6p9SB.js"></script>
+    <script type="module" crossorigin src="/assets/index-rRV0INl2.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
   </head>
   <body>
@@ -157,8 +157,9 @@ class ContainerConfiguration {
 }
 </code></pre>
 <p>이 방식은 조합의 자유도가 가장 높다는 게 장점인 것 같다. 다만 인터페이스에 <code>static</code> 필드로 선언하는 방식이다 보니, 필드 초기화 시점이나 인터페이스 여러 개를 동시에 구현했을 때 초기화 순서 같은 부분은 클래스 상속보다 살짝 덜 직관적으로 느껴질 수 있다.</p>
+<h3>중요한 내용</h3>
 <blockquote>
-<p>중요한 내용 <code>@ImportTestcontainers</code>를 썼다고 해서 무조건 Spring이 생명주기를 관리해주는 게 아니다. 공식 문서에 정확히 이렇게 나와 있다.
+<p><code>@ImportTestcontainers</code>를 썼다고 해서 무조건 Spring이 생명주기를 관리해주는 게 아니다. 공식 문서에 정확히 이렇게 나와 있다.
 Testcontainers가 제공하는 애노테이션과 확장(<code>@Testcontainers</code>, <code>@Container</code>)을 함께 썼다면, 생명주기는 전적으로 Testcontainers가 관리한다.
 즉, 인터페이스에 선언된 필드에 <code>@Container</code>가 붙어 있고, 테스트 클래스에 <code>@Testcontainers</code> 확장까지 같이 붙였다면, <code>@ImportTestcontainers</code>를 썼어도 상속하는 방법과 똑같이 클래스 단위로 껐다 켜는 생명주기를 그대로 물려받는다. 그러면 상속하는 방법에서 짚었던 Context Caching 어긋남이 인터페이스 방식에서도 똑같이 재현될 수 있다. <code>@ImportTestcontainers</code>의 진짜 이점(Spring이 관리하는 안전한 생명주기)을 온전히 받으려면, 테스트 클래스에 <code>@Testcontainers</code> 확장 애노테이션을 같이 붙이지 않아야 한다.
 정리하면, 어떤 방식을 쓰든 결국 Context Caching의 규칙을 깨뜨리지 않는 구조여야 한다는 원칙 하나로 귀결된다. 상속이든 인터페이스든, 생명주기를 Testcontainers 확장에 맡기는 순간 이 위험을 안고 가는 거고, 생명주기를 Spring(정적 초기화 블록 + <code>@ServiceConnection</code>, <code>@Bean</code>, 또는 <code>@Testcontainers</code> 없는 <code>@ImportTestcontainers</code>)에 맡기면 이 위험에서 벗어난다.</p>
