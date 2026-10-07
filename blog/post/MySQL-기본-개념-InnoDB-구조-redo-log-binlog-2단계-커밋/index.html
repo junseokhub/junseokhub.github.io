@@ -31,11 +31,11 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-rRV0INl2.js"></script>
+    <script type="module" crossorigin src="/assets/index-CRYGC5e6.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
   </head>
   <body>
-    <div id="root"><div class="prerender-content"><article><h1>MySQL 기본 개념 (InnoDB 구조, redo log, binlog, 2단계 커밋)</h1><p>Database/RDB · 2026-10-04</p><h1>Intro</h1>
+    <div id="root"><div class="prerender-content"><article><h1>MySQL 기본 개념 (InnoDB 구조, redo log, binlog, 2단계 커밋)</h1><p>Database/RDS · 2026-10-04</p><h1>Intro</h1>
 <p>복제, GTID, 장애 대응을 공부하려고 보니 계속 같은 단어들이 나왔다. binlog, redo log, 버퍼 풀, 2단계 커밋. 대충 로그 파일이겠거니 하고 넘어가면, 복제가 왜 어긋나는지, 크래시 후에 왜 데이터가 사라지는지를 설명할 수가 없었다.</p>
 <p>그래서 이번엔 MySQL이 커밋을 어떻게 디스크에 남기는지부터 직접 들여다보려고 한다. 개념을 읽고 끝내는 게 아니라, 쿠버네티스 위에 실험용 MySQL을 띄워서 버퍼 풀의 dirty page가 줄어드는 걸 보고, redo log의 LSN이 올라가는 걸 보고, binlog를 직접 디코딩하고, 마지막엔 mysqld를 강제로 죽여서 설정에 따라 커밋이 정말 사라지는지 확인해볼 거다.</p>
 <p>각 실험은 가설, 절차, 관찰, 결과 순서로 정리했고, 결과 표의 측정값 칸은 직접 돌려서 채우도록 비워뒀다.</p>
