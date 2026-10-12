@@ -32,7 +32,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CEortbdO.js"></script>
+    <script type="module" crossorigin src="/assets/index-Bo3WtOtG.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
   </head>
   <body>
@@ -42,9 +42,9 @@
 <p>우선 꼭 명심해야할 사항이 있다.<br/>
 지금까지 나는 테스트 결과들을 다 올리면서 비교하고 있었는데, 아무래도 로컬 + 개인서버를 조합하여 각각 다른날에 테스트를 하고있다보니, 실제 프로덕션환경에서는 GC, 네트워크 등 다양한 변수에 따라 결과가 달라질 수도있다. 절대 수치만을 너무 맹신해서는 안된다!</p>
 <p>마지막 10편에서는 동일한 시나리오를 Spring MVC + Virtual Thread로 구현하고 WebFlux와 성능을 비교한다. 핵심 질문은 하나다.</p>
-<p><strong>성능이 비슷하다면 복잡한 WebFlux를 써야 할 이유가 있는지?</strong></p>
+<p><code>성능이 비슷하다면 복잡한 WebFlux를 써야 할 이유가 있는지?</code></p>
 <hr/>
-<p><strong>WebFlux 프로젝트</strong></p>
+<h1>WebFlux 프로젝트</h1>
 <ul>
 <li>Spring Boot 4.0.5, WebFlux (Netty), Java 21</li>
 <li>DB: MySQL + R2DBC</li>
@@ -89,7 +89,9 @@
 </code></pre>
 <p>코드 변경 없이 Tomcat의 모든 요청 처리 스레드가 Virtual Thread로 동작한다.</p>
 <p>또 추가로 설정하려면</p>
-<p><strong>@Async 별도 설정</strong></p>
+<ul>
+<li>@Async 별도 설정</li>
+</ul>
 <pre><code class="language-java">@Configuration 
 @EnableAsync 
 public class AsyncConfig {
@@ -98,7 +100,9 @@ public class AsyncConfig {
     } 
 }
 </code></pre>
-<p><strong>Scheduled Task</strong></p>
+<ul>
+<li>Scheduled Task</li>
+</ul>
 <pre><code class="language-java">@Configuration 
 public class SchedulerConfig {
      @Bean public TaskScheduler taskScheduler() {
@@ -108,11 +112,21 @@ public class SchedulerConfig {
     }
 }
 </code></pre>
-<p><strong>Pinning</strong>
-JDK 21에서는 synchronized 블록 안에서 블로킹 호출이 발생하면 Virtual Thread가 캐리어 스레드에 고정(pinning)되어 장점이 사라지므로 주의해야 한다. 이런 경우 ReentrantLock 사용이 권장된다.</p>
-<p>참고로 JDK 24(JEP 491)부터는 synchronized에서도 pinning이 발생하지 않도록 개선되었기 때문에, 향후 JDK 업그레이드 시점에는 이 제약이 사라진다.</p>
-<p><strong>커넥션 풀 조정</strong>
-Virtual Thread는 거의 무제한으로 생성되기 때문에, 결국 DB 커넥션 풀이 동시성의 병목이 된다. 수천 개의 Virtual Thread가 동시에 커넥션을 요구하면 HikariCP에서 대기가 길어져 오히려 응답 시간이 악화될 수 있다. maximum-pool-size를 적절히 늘리거나, 필요하다면 Semaphore로 동시 실행 수를 제한하는 전략이 필요할 것 같다.</p>
+<ul>
+<li>
+<p>Pinning</p>
+<ul>
+<li>JDK 21에서는 synchronized 블록 안에서 블로킹 호출이 발생하면 Virtual Thread가 캐리어 스레드에 고정(pinning)되어 장점이 사라지므로 주의해야 한다. 이런 경우 ReentrantLock 사용이 권장된다.</li>
+<li>참고로 JDK 24(JEP 491)부터는 synchronized에서도 pinning이 발생하지 않도록 개선되었기 때문에, 향후 JDK 업그레이드 시점에는 이 제약이 사라진다.</li>
+</ul>
+</li>
+<li>
+<p>커넥션 풀 조정</p>
+</li>
+<li>
+<p>Virtual Thread는 거의 무제한으로 생성되기 때문에, 결국 DB 커넥션 풀이 동시성의 병목이 된다. 수천 개의 Virtual Thread가 동시에 커넥션을 요구하면 HikariCP에서 대기가 길어져 오히려 응답 시간이 악화될 수 있다. maximum-pool-size를 적절히 늘리거나, 필요하다면 Semaphore로 동시 실행 수를 제한하는 전략이 필요할 것 같다.</p>
+</li>
+</ul>
 <hr/>
 <h1>테스트 결과</h1>
 <h2>직접 처리 (Kafka 없이)</h2>
@@ -191,6 +205,6 @@ Redis Lua 스크립트로 이번 시리즈에서 원자성을 확보했지만, R
 <li>관측성<br/>
 부하 테스트로 TPS와 p95는 측정했지만, 실제로 병목이 어디인지는 별도 도구가 필요하다. Micrometer + Prometheus + Grafana로 메트릭을 수집하고, OpenTelemetry로 분산 트레이싱을 걸어 WebFlux와 MVC의 내부 동작을 시각화해보면 좋을 것 같다. 원래 이번 시리즈에서 진행하려고 했는데 개인 서버 용량이 마땅치 않아 미루다가 못하게 됐다. 추후 서버를 신규 개설해서 꼭 해봐야겠다.</li>
 </ol>
-<p><strong>기술 선택에 정답은 없다. 상황에 맞는 트레이드오프를 이해하고 선택하는 것이 중요하고 생각한다.</strong></p></article></div></div>
+<p><code>기술 선택에 정답은 없다. 상황에 맞는 트레이드오프를 이해하고 선택하는 것이 중요하고 생각한다.</code></p></article></div></div>
   </body>
 </html>

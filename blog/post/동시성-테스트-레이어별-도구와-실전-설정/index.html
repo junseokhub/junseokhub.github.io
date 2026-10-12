@@ -31,7 +31,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CEortbdO.js"></script>
+    <script type="module" crossorigin src="/assets/index-Bo3WtOtG.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
   </head>
   <body>
@@ -579,7 +579,7 @@ class BoundedCounterLincheckTest {
 </li>
 </ul>
 <hr/>
-<h1>그래서 어떻게 조합하나</h1>
+<h1>그래서 어떻게 조합할까?</h1>
 <pre><code class="language-bash">서비스 로직 하나의 race condition          -&gt; 레이어 1: ExecutorService + CountDownLatch (기본값)
 요청 수를 크게 늘려 드문 경합까지          -&gt; 레이어 1: Virtual Thread (커넥션 풀이 실제 상한)
 비동기 처리(Kafka, @Async)의 최종 상태     -&gt; 레이어 1: Awaitility로 결과 검증 조합
@@ -614,15 +614,13 @@ class BoundedCounterLincheckTest {
 </ul>
 <p>동시성 제어 코드를 짜는 것만큼, 그걸 제대로 검증하는 테스트를 짜는 게 어렵다는 걸 알게 됐다. 테스트가 통과했다는 사실보다, 그 테스트가 정말로 요청을 동시에 몰아넣었는지, 그리고 실패를 숨기고 있지는 않은지를 먼저 의심해보는 게 순서인 것 같다.</p>
 <h1>참고</h1>
-<blockquote>
 <ul>
 <li><a href="https://docs.gatling.io/integrations/build-tools/gradle-plugin/">Gatling Gradle Plugin</a></li>
-<li><a href="https://plugins.gradle.org/plugin/io.gatling.gradle">Gradle Plugin Portal — io.gatling.gradle</a></li>
-<li><a href="https://plugins.gradle.org/plugin/io.github.reyerizo.gradle.jcstress">Gradle Plugin Portal — io.github.reyerizo.gradle.jcstress</a></li>
+<li><a href="https://plugins.gradle.org/plugin/io.gatling.gradle">Gradle Plugin Portal, io.gatling.gradle</a></li>
+<li><a href="https://plugins.gradle.org/plugin/io.github.reyerizo.gradle.jcstress">Gradle Plugin Portal, io.github.reyerizo.gradle.jcstress</a></li>
 <li><a href="https://github.com/JetBrains/lincheck">Lincheck GitHub</a></li>
 <li><a href="https://kotlinlang.org/docs/introduction.html">Lincheck 공식 가이드 (Kotlin 문서)</a></li>
 <li><a href="https://hub.docker.com/r/ngrinder/controller">nGrinder Docker Hub</a></li>
-</ul>
-</blockquote></article></div></div>
+</ul></article></div></div>
   </body>
 </html>

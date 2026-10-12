@@ -1375,7 +1375,7 @@ date: 2026-06-24
 
 ---
 
-# 셋은 같은 레이어가 아니다
+# 셋은 같은 레이어가 아니다.
 
 여기 섞여 있는 건 사실 두 개의 다른 질문이다.
 
@@ -3449,12 +3449,14 @@ echo "SELECT NAME, COUNT, STATUS FROM information_schema.INNODB_METRICS WHERE NA
 
 \`data_locks\`를 직접 보기 전까지는 \`FOR UPDATE\`가 조회한 행 하나만 잠근다고 생각했다. 실제로는 존재하지도 않는 키 때문에 간격이 잠기고, 그 간격을 두 트랜잭션이 동시에 잡을 수 있다는 게 데드락 대부분의 정체였다. 데드락 로그가 찍히면 이제 \`lock_mode\` 한 줄부터 읽어보게 될 것 같다.
 
-**참고**
-- [MySQL 8.4 Reference Manual — InnoDB Locking](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html)
-- [MySQL 8.4 Reference Manual — Transaction Isolation Levels](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html)
-- [MySQL 8.4 Reference Manual — Locks Set by Different SQL Statements in InnoDB](https://dev.mysql.com/doc/refman/8.4/en/innodb-locks-set.html)
-- [MySQL 8.4 Reference Manual — Deadlocks in InnoDB](https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks.html)
-- [MySQL 8.4 Reference Manual — The data_locks Table](https://dev.mysql.com/doc/refman/8.4/en/performance-schema-data-locks-table.html)`,o6=`---
+---
+
+# 참고
+- [MySQL 8.4 Reference Manual, InnoDB Locking](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking.html)
+- [MySQL 8.4 Reference Manual, Transaction Isolation Levels](https://dev.mysql.com/doc/refman/8.4/en/innodb-transaction-isolation-levels.html)
+- [MySQL 8.4 Reference Manual, Locks Set by Different SQL Statements in InnoDB](https://dev.mysql.com/doc/refman/8.4/en/innodb-locks-set.html)
+- [MySQL 8.4 Reference Manual, Deadlocks in InnoDB](https://dev.mysql.com/doc/refman/8.4/en/innodb-deadlocks.html)
+- [MySQL 8.4 Reference Manual, The data_locks Table](https://dev.mysql.com/doc/refman/8.4/en/performance-schema-data-locks-table.html)`,o6=`---
 date: 2026-10-04T22:21:06+09:00
 title: MySQL 기본 개념 (InnoDB 구조, redo log, binlog, 2단계 커밋)
 ---
@@ -4082,13 +4084,15 @@ kubectl logs -n lab-mysql mysql-0 -c mysql | grep -iE "recovery|crash"
 
 커밋이 성공했다는 응답이 곧 데이터가 안전하다는 뜻이라고 막연히 믿고 있었는데, 그 믿음이 성립하려면 로그 두 개가 올바른 순서로 디스크에 닿아야 한다는 걸 알게 됐다. 그리고 이 binlog가 트랜잭션 단위로 다른 서버에 전달되는 게 복제의 전부라서, 여기서 본 binlog의 트랜잭션 식별자가 다음에 볼 GTID로 그대로 이어진다.
 
+---
+
 # 참고
-> - [MySQL 8.4 Reference Manual — The Binary Log](https://dev.mysql.com/doc/refman/8.4/en/binary-log.html)
-> - [MySQL 8.4 Reference Manual — Redo Log](https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html)
-> - [MySQL 8.4 Reference Manual — InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.4/en/innodb-multi-versioning.html)
-> - [MySQL 8.4 Reference Manual — InnoDB Startup Options and System Variables](https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html)
-> - [MySQL 8.4 Reference Manual — Binary Logging Options and Variables](https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html)
-> - [Kubernetes — Share Process Namespace between Containers in a Pod](https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/)`,s6=`---
+- [MySQL 8.4 Reference Manual, The Binary Log](https://dev.mysql.com/doc/refman/8.4/en/binary-log.html)
+- [MySQL 8.4 Reference Manual, Redo Log](https://dev.mysql.com/doc/refman/8.4/en/innodb-redo-log.html)
+- [MySQL 8.4 Reference Manual, InnoDB Multi-Versioning](https://dev.mysql.com/doc/refman/8.4/en/innodb-multi-versioning.html)
+- [MySQL 8.4 Reference Manual, InnoDB Startup Options and System Variables](https://dev.mysql.com/doc/refman/8.4/en/innodb-parameters.html)
+- [MySQL 8.4 Reference Manual, Binary Logging Options and Variables](https://dev.mysql.com/doc/refman/8.4/en/replication-options-binary-log.html)
+- [Kubernetes, Share Process Namespace between Containers in a Pod](https://kubernetes.io/docs/tasks/configure-pod-container/share-process-namespace/)`,s6=`---
 date: 2026-08-24T22:31:18+09:00
 title: API Gateway 비교 (Ingress vs Kong vs Spring Cloud Gateway)
 ---
@@ -8072,11 +8076,11 @@ thumbnail: /blog/images/coupon_order.png
 
 마지막 10편에서는 동일한 시나리오를 Spring MVC + Virtual Thread로 구현하고 WebFlux와 성능을 비교한다. 핵심 질문은 하나다.
 
-**성능이 비슷하다면 복잡한 WebFlux를 써야 할 이유가 있는지?**
+\`성능이 비슷하다면 복잡한 WebFlux를 써야 할 이유가 있는지?\`
 
 ---
 
-**WebFlux 프로젝트**
+# WebFlux 프로젝트
 
 - Spring Boot 4.0.5, WebFlux (Netty), Java 21
 - DB: MySQL + R2DBC
@@ -8120,7 +8124,7 @@ spring:
 
 또 추가로 설정하려면
 
-**@Async 별도 설정**
+- @Async 별도 설정
 
 \`\`\`java
 @Configuration 
@@ -8132,7 +8136,7 @@ public class AsyncConfig {
 }
 \`\`\`
 
-**Scheduled Task**
+- Scheduled Task
 \`\`\`java
 @Configuration 
 public class SchedulerConfig {
@@ -8143,13 +8147,12 @@ public class SchedulerConfig {
     }
 }
 \`\`\`
-**Pinning**
-JDK 21에서는 synchronized 블록 안에서 블로킹 호출이 발생하면 Virtual Thread가 캐리어 스레드에 고정(pinning)되어 장점이 사라지므로 주의해야 한다. 이런 경우 ReentrantLock 사용이 권장된다.
+- Pinning
+  - JDK 21에서는 synchronized 블록 안에서 블로킹 호출이 발생하면 Virtual Thread가 캐리어 스레드에 고정(pinning)되어 장점이 사라지므로 주의해야 한다. 이런 경우 ReentrantLock 사용이 권장된다.
+  - 참고로 JDK 24(JEP 491)부터는 synchronized에서도 pinning이 발생하지 않도록 개선되었기 때문에, 향후 JDK 업그레이드 시점에는 이 제약이 사라진다.
 
-참고로 JDK 24(JEP 491)부터는 synchronized에서도 pinning이 발생하지 않도록 개선되었기 때문에, 향후 JDK 업그레이드 시점에는 이 제약이 사라진다.
-
-**커넥션 풀 조정**
-Virtual Thread는 거의 무제한으로 생성되기 때문에, 결국 DB 커넥션 풀이 동시성의 병목이 된다. 수천 개의 Virtual Thread가 동시에 커넥션을 요구하면 HikariCP에서 대기가 길어져 오히려 응답 시간이 악화될 수 있다. maximum-pool-size를 적절히 늘리거나, 필요하다면 Semaphore로 동시 실행 수를 제한하는 전략이 필요할 것 같다.
+- 커넥션 풀 조정
+- Virtual Thread는 거의 무제한으로 생성되기 때문에, 결국 DB 커넥션 풀이 동시성의 병목이 된다. 수천 개의 Virtual Thread가 동시에 커넥션을 요구하면 HikariCP에서 대기가 길어져 오히려 응답 시간이 악화될 수 있다. maximum-pool-size를 적절히 늘리거나, 필요하다면 Semaphore로 동시 실행 수를 제한하는 전략이 필요할 것 같다.
 
 ---
 
@@ -8272,7 +8275,7 @@ public Order createOrder(Long userId, Long productId) {
 5.  관측성  
     부하 테스트로 TPS와 p95는 측정했지만, 실제로 병목이 어디인지는 별도 도구가 필요하다. Micrometer + Prometheus + Grafana로 메트릭을 수집하고, OpenTelemetry로 분산 트레이싱을 걸어 WebFlux와 MVC의 내부 동작을 시각화해보면 좋을 것 같다. 원래 이번 시리즈에서 진행하려고 했는데 개인 서버 용량이 마땅치 않아 미루다가 못하게 됐다. 추후 서버를 신규 개설해서 꼭 해봐야겠다.
 
-**기술 선택에 정답은 없다. 상황에 맞는 트레이드오프를 이해하고 선택하는 것이 중요하고 생각한다.**`,T6=`---
+\`기술 선택에 정답은 없다. 상황에 맞는 트레이드오프를 이해하고 선택하는 것이 중요하고 생각한다.\``,T6=`---
 title: [Seatflow] 01. 프로젝트 설계와 모노레포 세팅
 date: 2026-05-11
 thumbnail: /blog/images/seatflow_msa.png
@@ -11702,7 +11705,7 @@ thumbnail: /blog/images/seatflow_msa.png
 
 ---
 
-# 결제가 끝나도 예매가 안 끝난다
+# 결제가 끝나도 예매가 안 끝난다.
 
 결제 서비스는 결제가 끝나면 payment.completed를 발행한다. 그런데 이 이벤트를 받는 곳이 없었다.
 
@@ -11760,7 +11763,7 @@ Kafka는 at-least-once라 같은 payment.completed가 두 번 올 수 있다. �
 
 ---
 
-# 돈은 빠졌는데 이벤트가 유실된다
+# 돈은 빠졌는데 이벤트가 유실된다.
 
 결제 서비스는 결제를 저장한 뒤 Kafka로 직접 발행하고 있었다.
 
@@ -11777,7 +11780,7 @@ kafkaTemplate.send(PAYMENT_COMPLETED, event);     // Kafka 직접 발행
 
 방법 정합성 비고
 
-| **방법** |  **정합성** | **비고** |
+| 방법 | 정합성 | 비고 |
 | --- | --- | --- |
 | dual-write 유지 | 깨짐 | 발행 실패 시 이벤트 유실 |
 | @TransactionalEventListener | 부분적 | 커밋 후 발행, 그래도 발행 자체 실패는 못 막음 |
@@ -13586,7 +13589,7 @@ clearAutomatically = true를 붙이면, 이 수정 쿼리 직후 영속성 컨�
 
 ---
 
-## 테스트를 위해 생성자에 파라미터를 추가하는 것과 리플렉션 중 무엇이 나은가
+## 테스트를 위해 생성자에 파라미터를 추가하는 것과 리플렉션 중 무엇이 나을까?
 
 엔티티들 중 일부는 상태 필드가 JPA의 저장 전 콜백에서만 초기화된다. 이 콜백은 실제로 저장할 때만 호출되기 때문에, 저장을 하지 않는 순수 단위 테스트에서는 상태가 계속 비어있다. 상태 전이 메서드들이 지금 상태가 뭔지에 따라 분기하니, 테스트에서 원하는 상태를 미리 만들 방법이 필요했다.
 
@@ -13621,7 +13624,7 @@ private Reservation(String userId, String showId, Long seatId,
 
 ---
 
-## Mock으로 만든 객체가 이상하게 동작하는 것 같았지만, 진짜 원인은 생성자 인자 순서였다
+## Mock으로 만든 객체가 이상하게 동작하는 것 같았지만, 진짜 원인은 생성자 인자 순서였다.
 
 한 서비스 클래스의 단위 테스트를 짜면서 여러 가지 이상한 예외를 겪었다. Mock 설정과 관련된 예외들이 예상 못 한 순간에 터졌고, 처음엔 이 환경에서 Mock을 쓰는 게 불안정한가 싶어서 Mock을 포기하고 진짜 객체로 돌아가려던 참이었다.
 
@@ -13749,7 +13752,7 @@ try {
 
 Redis 연결 설정을 다시 보니, 테스트 환경(단일 노드)과 운영 환경(클러스터)을 프로파일로 정확히 나눠뒀었다. 근데 각 설정 메서드에 로그를 찍어봤더니 둘 다 안 찍혔다. 둘 다 아예 생성 시도조차 안 되고 있었다.
 
-### 애초에 컴포넌트 스캔 범위 밖에 있었다
+### 애초에 컴포넌트 스캔 범위 밖에 있었다.
 
 메인 애플리케이션 클래스는 자기가 있는 패키지를 기준으로 그 패키지와 하위 패키지만 기본적으로 컴포넌트 스캔한다. 근데 이 Redis 설정 클래스는 공통 모듈(별도 라이브러리 모듈) 안의, 애플리케이션 패키지와는 다른 최상위 패키지에 있었다. 하위 패키지가 아니라서, 이 설정 클래스 자체가 스캔에서 완전히 빠져 있었다.
 
@@ -14003,7 +14006,7 @@ static void tearDown() {
 
 여기까지는 컨테이너를 여러 테스트가 안전하게 나눠 쓰는 문제였다. 이번엔 진짜로 Kafka에 메시지를 발행하고 그걸 구독해서 처리하는 통합 테스트를 만들면서, 컨테이너 공유와는 또 다른 종류의 문제를 만났다.
 
-## DB와 Kafka는 근본적으로 다르다
+## DB와 Kafka는 근본적으로 다르다.
 
 지금까지 다룬 MySQL, Redis, MongoDB는 전부 테스트가 요청하면 그 자리에서 바로 응답이 오는 방식이다.
 
@@ -15568,7 +15571,7 @@ Jepsen은 DB나 메시지 브로커 같은 분산 시스템이, 네트워크 분
 
 ---
 
-# 그래서 어떻게 조합하나
+# 그래서 어떻게 조합할까?
 \`\`\`bash
 서비스 로직 하나의 race condition          -> 레이어 1: ExecutorService + CountDownLatch (기본값)
 요청 수를 크게 늘려 드문 경합까지          -> 레이어 1: Virtual Thread (커넥션 풀이 실제 상한)
@@ -15598,12 +15601,12 @@ CI에서 매번 돌리는 건 레이어 1과 레이어 3이다. 둘 다 JUnit이
 동시성 제어 코드를 짜는 것만큼, 그걸 제대로 검증하는 테스트를 짜는 게 어렵다는 걸 알게 됐다. 테스트가 통과했다는 사실보다, 그 테스트가 정말로 요청을 동시에 몰아넣었는지, 그리고 실패를 숨기고 있지는 않은지를 먼저 의심해보는 게 순서인 것 같다.
 
 # 참고
-> - [Gatling Gradle Plugin](https://docs.gatling.io/integrations/build-tools/gradle-plugin/)
-> - [Gradle Plugin Portal — io.gatling.gradle](https://plugins.gradle.org/plugin/io.gatling.gradle)
-> - [Gradle Plugin Portal — io.github.reyerizo.gradle.jcstress](https://plugins.gradle.org/plugin/io.github.reyerizo.gradle.jcstress)
-> - [Lincheck GitHub](https://github.com/JetBrains/lincheck)
-> - [Lincheck 공식 가이드 (Kotlin 문서)](https://kotlinlang.org/docs/introduction.html)
-> - [nGrinder Docker Hub](https://hub.docker.com/r/ngrinder/controller)`,q6=`---
+- [Gatling Gradle Plugin](https://docs.gatling.io/integrations/build-tools/gradle-plugin/)
+- [Gradle Plugin Portal, io.gatling.gradle](https://plugins.gradle.org/plugin/io.gatling.gradle)
+- [Gradle Plugin Portal, io.github.reyerizo.gradle.jcstress](https://plugins.gradle.org/plugin/io.github.reyerizo.gradle.jcstress)
+- [Lincheck GitHub](https://github.com/JetBrains/lincheck)
+- [Lincheck 공식 가이드 (Kotlin 문서)](https://kotlinlang.org/docs/introduction.html)
+- [nGrinder Docker Hub](https://hub.docker.com/r/ngrinder/controller)`,q6=`---
 date: 2026-09-26T22:28:24+09:00
 title: 부하 테스트와 장애 주입
 ---
@@ -16113,10 +16116,10 @@ Redis / Kafka -> 순차면 정리, 병렬이면 prefix·고유 식별자로 분�
 처음엔 테스트가 가끔 실패하는 걸 테스트 환경이 불안정해서라고 생각했는데, 대부분은 테스트끼리 상태를 공유하고 있어서였다. 격리 전략은 하나를 고르는 문제가 아니라, 테스트 종류와 병렬화 방식에 맞춰 조합하는 문제인 것 같다.
 
 # 참고
-- [Spring Framework — Testing: Transaction Management](https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/tx.html)
-- [Spring Framework — Testing: Context Caching](https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/ctx-management/caching.html)
-- [JUnit 5 User Guide — Parallel Execution](https://junit.org/junit5/docs/current/user-guide/#writing-tests-parallel-execution)
-- [Gradle — Testing in Java & JVM projects](https://docs.gradle.org/current/userguide/java_testing.html)`,Y6='---\ndate: 2026-07-12T23:39:19+09:00\ntitle: TestContainers 재사용 패턴 비교\nthumbnail: /blog/images/testcontainers.png\n---\n\n# Intro\n통합 테스트를 짤 때마다 컨테이너를 매번 새로 띄우면 테스트 스위트 전체가 눈에 띄게 느려진다. 그래서 여러 테스트 클래스가 같은 컨테이너를 공유하게 만드는 방법을 찾아보다가, 크게 세 가지 방식(상속, 전역 공유용 별도 클래스, 인터페이스 컴포지션)을 써봤다. \n\n그래서 이 세 가지를 실제로 비교해보고, 공식 문서 기준으로는 뭘 권장하는지, 실무에서는 어떤 게 더 널리 쓰이는지 정리해보려고 한다.\n\n---\n\n# 왜 재사용이 필요할까?\n가장 기본적인 형태는 테스트 클래스 안에 `@Testcontainers` + `@Container`를 바로 붙이는 거다.\n\n```java\n@Testcontainers\n@SpringBootTest\nclass OrderControllerTest {\n\n    @Container\n    static MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.0");\n\n    @Test\n    void someTest() { /* ... */ }\n}\n```\n\n이렇게 하면 이 컨테이너는 이 클래스가 실행되는 동안만 살아있고, 클래스가 끝나면 Testcontainers 확장이 알아서 정지시킨다. 문제는 다른 테스트 클래스(`PaymentControllerTest` 등)도 같은 MySQL이 필요하면, 거기서도 또 새로 띄운다는 거다. 클래스 수가 늘어날수록 컨테이너를 반복해서 기동하는 시간이 그대로 쌓인다.\n\n\n---\n\n# 예전엔 프로퍼티를 직접 매핑했다\n세 가지 재사용 패턴을 보기 전에 짚고 갈 게 하나 있다. 컨테이너를 띄우는 것과, 그 컨테이너의 접속 정보(URL, 포트, 계정)를 스프링 애플리케이션에 실제로 연결하는 건 별개의 일이다. `@ServiceConnection`이 나오기 전에는(Spring Boot 3.1, 2023년 6월 이전) 이 연결을 `@DynamicPropertySource`로 사람이 직접 매핑해야 했다.\n\n```java\n@DynamicPropertySource\nstatic void configureProperties(DynamicPropertyRegistry registry) {\n    registry.add("spring.datasource.url", mysql::getJdbcUrl);\n    registry.add("spring.datasource.username", mysql::getUsername);\n    registry.add("spring.datasource.password", mysql::getPassword);\n}\n```\n\n이 방식의 문제는 프로퍼티 이름(`spring.datasource.url` 같은)을 문자열로 직접 타이핑해야 한다는 거다. `spring.datasource.url`을 `spring.datasource.urls`처럼 오타 내도 컴파일은 멀쩡히 되고, 테스트를 돌려봐야 연결이 안 되는 걸로 뒤늦게 알게 된다. 그리고 Redis, Kafka처럼 컨테이너 종류가 늘어날수록 이 매핑 코드도 그만큼 반복해서 늘어난다.\n\nSpring Boot에서 이 문제를 정확히 짚어서 낸 게 `@ServiceConnection`이다. Spring Boot 3.1 공식 블로그 제목이 아예 Improved Testcontainers Support였을 정도로, 이 보일러플레이트를 없애는 게 이 기능이 나온 이유였다고 한다. 컨테이너 필드나 빈에 `@ServiceConnection`만 붙이면, 프로퍼티 이름 매핑 자체를 Spring이 컨테이너 타입을 보고 알아서 해준다.그리고 이 매핑 정보를 우리 코드가 아니라 Spring Boot가 들고 있으니, 나중에 Spring Boot 버전이 올라가면서 프로퍼티 이름이 바뀌어도 우리가 신경 쓸 일이 없어진다.\n\n그래서 뒤에 나오는 방법들의 코드에 `@ServiceConnection`이 들어가 있는 거고, 상속하는 방법)에서도 필드에 그대로 붙이면 똑같이 쓸 수 있다.\n\n---\n# 사용 방법\n## 상속 (Abstract 클래스)\n공식 Testcontainers 문서에서 오래전부터 소개해온 방식이다. 추상 클래스에 `static` 초기화 블록으로 컨테이너를 딱 한 번만 띄우고, 각 테스트 클래스가 이 추상 클래스를 상속한다.\n\n```java\nabstract class AbstractIntegrationTest {\n\n    static final MySQLContainer<?> MYSQL;\n\n    static {\n        MYSQL = new MySQLContainer<>("mysql:8.0");\n        MYSQL.start();   // 클래스가 로드될 때 딱 한 번 실행\n    }\n}\n```\n\n```java\n@SpringBootTest\nclass OrderControllerTest extends AbstractIntegrationTest {\n\n    @Test\n    void someTest() {\n        // MYSQL은 이미 떠 있는 상태\n    }\n}\n```\n\n여기서 중요한 함정이 하나 있다. 이 패턴을 `@Testcontainers`/`@Container` 애노테이션과 같이 쓰면 안 된다. 정확한 이유를 따져보면 두 단계로 나뉜다.\n\n첫 번째는, `static` 필드에 `@Container`를 붙이면 그 필드가 부모 클래스에 선언돼 있어도 Testcontainers Extension은 클래스 단위(per-class)로 생명주기를 관리한다는 거다. 그래서 이 부모 클래스를 상속한 자식 클래스가 실행될 때마다 컨테이너가 떴다가, 그 클래스가 끝나면 죽는 걸 반복한다. 여기까지는 Extension이 원래 그렇게 동작하도록 만들어진 거라 문제가 아니다.\n\n진짜 문제는 두 번째 단계에서 생긴다. 컨테이너는 자식 클래스가 바뀔 때마다 새로 죽고 새로 뜨는데, Spring의 테스트 컨텍스트 캐싱(Context Caching) 메커니즘은 부모 클래스(설정)가 같으니 같은 `ApplicationContext`를 재사용해도 된다고 판단해버린다. 그래서 두 번째 자식 클래스는 이전 컨테이너의 접속 정보를 담고 있는, 이미 캐싱된 컨텍스트를 그대로 재사용하려고 하는데, 정작 그 컨테이너는 이미 죽고 새로운 컨테이너가 다른 포트로 떠 있는 상태다. 이 어긋남 때문에 연결 오류가 난다. 그래서 이 패턴은 애노테이션 없이, `static` 블록으로 직접 시작하고 멈추는 시점은 Testcontainers의 Ryuk 컨테이너가 JVM 종료 시점에 알아서 정리하도록 맡겨야 한다.\n\n\n이 방식은 코드가 짧고 직관적이라 처음 배울 때 가장 이해하기 쉬웠다. 다만 자바는 클래스 다중 상속이 안 되기 때문에, 테스트 클래스가 이미 다른 베이스 클래스를 상속하고 있다면 이 패턴을 못 쓴다. 그리고 프로젝트가 커질수록 모든 통합 테스트는 이 거대한 베이스 클래스 하나를 상속하는 구조가 되기 쉬운데, 그러면 그 베이스 클래스가 점점 여러 컨테이너를 다 짊어지는 God class가 되기 쉬운 것 같다.\n\n이 방식이 실제로 유리한 지점도 하나 있긴 하다.\n순수하게 `static` 블록만으로 동작하기 때문에, Spring 컨텍스트가 아예 없어도 그대로 쓸 수 있다.Spring Bean을 쓰는 방법은 컨테이너를 빈으로 등록하는 방식이라 애초에 Spring 테스트 컨텍스트가 있어야 성립하는데, 이 방식은 순수 자바/JUnit 테스트에서도 그대로 동작한다. 다만 이것도 상속만의 고유한 장점은 아니다.\n인터페이스를 사용하는 방법도 `@ImportTestcontainers` 없이 그냥 `implements`만 하는 거라면 똑같이 Spring 없이 동작한다. 그러니 정확히는 Spring 빈으로 관리하는 방식 vs 순수 Testcontainers 생명주기로 관리하는 방식(상속,인터페이스 컴포지션)의 차이지, 상속과 인터페이스 사이의 차이는 아니다. 초기화 로직을 자유롭게 짤 수 있다는 것 자체도 상속만의 장점은 아니다.\n\n---\n\n## 전역 공유 (Spring Bean으로 관리)\nSpring Boot 공식 문서에서 제일 먼저 소개하는 방법이다. 컨테이너를 `@TestConfiguration` 클래스 안에 `@Bean`으로 등록하고, 필요한 테스트 클래스에서 `@Import`로 갖다 쓰는 방식이다. 상속이 아니라 합성(composition)이다.\n\n```java\n@TestConfiguration(proxyBeanMethods = false)\nclass ContainerConfiguration {\n\n    @Bean\n    @ServiceConnection\n    MySQLContainer<?> mysqlContainer() {\n        return new MySQLContainer<>("mysql:8.0");\n    }\n}\n```\n\n```java\n@SpringBootTest\n@Import(ContainerConfiguration.class)\nclass OrderControllerTest {\n\n    @Test\n    void someTest() { /* ... */ }\n}\n```\n\n이 방식의 핵심은 컨테이너 생명주기를 Spring이 직접 관리하는 것이다. 컨테이너 빈은 다른 모든 빈보다 먼저 뜨고, 다른 모든 빈이 정리된 뒤에 내려간다. 그래서 상속으로 하는 방법에서 조심해야 했던 컨테이너는 죽었는데 캐싱된 컨텍스트가 그걸 참조하는 문제가 구조적으로 안 생긴다. Spring Boot 공식 문서도 애플리케이션 빈이 컨테이너 기능에 의존한다면 컨테이너를 Spring 빈으로 구성하는 쪽을 우선하라고 명시하고 있다.\n\n다만 이것도 컴포넌트가 전역적으로 딱 하나만 뜬다는 게 코드에 명시적으로 보장된 장치는 아니다. 같은 `@TestConfiguration`을 `@Import`하는 테스트 클래스들끼리, Spring의 테스트 컨텍스트 캐싱 메커니즘(설정이 같으면 컨텍스트를 재사용하는 규칙) 덕분에 결과적으로 공유되는 것이다. 그래서 이 방식을 제대로 쓰려면 Spring 테스트 컨텍스트 캐싱이 어떻게 동작하는지를 어느 정도 알아야 하는 것 같다.\n\n---\n\n## 인터페이스 컴포지션\n컨테이너를 인터페이스 안에 `static` 필드로 선언하고, 테스트 클래스가 그 인터페이스를 구현(`implements`)하는 방식이다.Spring Boot 공식 문서에 Testcontainers에서 흔히 쓰이는 패턴으로 그대로 소개되고있다.\n\n```java\ninterface MySqlTestContainer {\n\n    @Container\n    @ServiceConnection\n    MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0");\n}\n```\n\n`@ServiceConnection`은 필드에도, `@Bean` 메서드에도 붙일 수 있는데, 이 둘이 완전히 동등하지는 않다는 걸 찾아보다 알게 됐다. `@Bean` 메서드 방식은 Spring이 그 메서드를 미리 호출해서 컨테이너 인스턴스를 들여다보지 않는다(호출하면 즉시 초기화 문제가 생기기 때문이라고 한다). 그래서 `@Bean` 방식은 메서드에 선언된 반환 타입만 보고 어떤 연결 정보를 만들지 판단한다.\n`MySQLContainer`처럼 타입 자체가 DB 종류를 말해주는 전용 클래스면 문제없지만, `GenericContainer`(Redis처럼 전용 클래스가 따로 없는 경우)를 반환 타입으로 쓰면 그 타입만으로는 안에 뭐가 들었는지 Spring이 알 방법이 없다.\n\n반면 `static` 필드 방식(인터페이스 컴포지션 포함)은 이미 만들어진 인스턴스에 바로 접근할 수 있어서, Docker 이미지 이름의 레포지토리 부분(예: `redis:7-alpine` -> `redis`)을 보고 자동으로 추론해준다. 그래서 필드 방식에서는 웬만한 경우 별도 설정 없이도 잘 동작한다. 다만 이미지 이름이 표준적이지 않은 커스텀 이미지를 쓴다면, 필드 방식에서도 `@ServiceConnection(name = "redis")`처럼 `name` 속성으로 명시적으로 알려줘야 한다. `@Bean` 방식에서 `GenericContainer`를 꼭 써야 한다면 이 `name` 속성이 사실상 필수인 셈이다. (`type` 속성은 이것과는 다른 용도로, 여러 `ConnectionDetails` 후보 중 특정 타입으로 제한하고 싶을 때 쓰는 별도 옵션이다.)\n\n컨테이너 종류에 따라서는 이렇게 인터페이스 컴포지션(필드 기반) 쪽이 오히려 Spring Bean 방식보다 더 안정적으로 동작하는 지점도 있는 셈이다.\n\n\n```java\n@SpringBootTest\nclass OrderControllerTest implements MySqlTestContainer {\n\n    @Test\n    void someTest() { /* ... */ }\n}\n```\n\n인터페이스는 자바에서 여러 개를 동시에 구현할 수 있다.그래서 `MySqlTestContainer`, `KafkaTestContainer`, `RedisTestContainer`처럼 컨테이너별로 인터페이스를 쪼개두면, 테스트 클래스는 자기가 필요한 것만 골라서 조합할 수 있다.\n\n```java\n@SpringBootTest\nclass OrderServiceTest implements MySqlTestContainer, RedisTestContainer, KafkaTestContainer {\n\n    @Test\n    void someTest() { /* 세 컨테이너 다 사용 가능 */ }\n}\n```\n\n상속 방식이었다면 MySQL만 필요한 테스트, MySQL+Redis가 필요한 테스트, 셋 다 필요한 테스트 등등 모든 테스트마다 조합별로 별도의 abstract 클래스를 계속 만들어야 했을 거다. 인터페이스는 그때그때 필요한 것만 `implements`에 나열하면 되니까, 조합이 늘어나도 새 클래스를 따로 안 만들어도 된다.\n\nSpring 설정 클래스에서 이 인터페이스를 쓰고 싶다면 `@ImportTestcontainers`로 가져다 쓸 수도 있다. 이건 인터페이스에 선언된 `static` 필드들(컨테이너 필드, `@DynamicPropertySource` 메서드)을 Spring이 스캔해서 직접 빈으로 등록해주는 애노테이션이다.\n\n```java\n@TestConfiguration(proxyBeanMethods = false)\n@ImportTestcontainers(MySqlTestContainer.class)\nclass ContainerConfiguration {\n}\n```\n\n이 방식은 조합의 자유도가 가장 높다는 게 장점인 것 같다. 다만 인터페이스에 `static` 필드로 선언하는 방식이다 보니, 필드 초기화 시점이나 인터페이스 여러 개를 동시에 구현했을 때 초기화 순서 같은 부분은 클래스 상속보다 살짝 덜 직관적으로 느껴질 수 있다.\n\n### 중요한 내용\n> `@ImportTestcontainers`를 썼다고 해서 무조건 Spring이 생명주기를 관리해주는 게 아니다. 공식 문서에 정확히 이렇게 나와 있다.\n> Testcontainers가 제공하는 애노테이션과 확장(`@Testcontainers`, `@Container`)을 함께 썼다면, 생명주기는 전적으로 Testcontainers가 관리한다.\n> 즉, 인터페이스에 선언된 필드에 `@Container`가 붙어 있고, 테스트 클래스에 `@Testcontainers` 확장까지 같이 붙였다면, `@ImportTestcontainers`를 썼어도 상속하는 방법과 똑같이 클래스 단위로 껐다 켜는 생명주기를 그대로 물려받는다. 그러면 상속하는 방법에서 짚었던 Context Caching 어긋남이 인터페이스 방식에서도 똑같이 재현될 수 있다. `@ImportTestcontainers`의 진짜 이점(Spring이 관리하는 안전한 생명주기)을 온전히 받으려면, 테스트 클래스에 `@Testcontainers` 확장 애노테이션을 같이 붙이지 않아야 한다.\n> 정리하면, 어떤 방식을 쓰든 결국 Context Caching의 규칙을 깨뜨리지 않는 구조여야 한다는 원칙 하나로 귀결된다. 상속이든 인터페이스든, 생명주기를 Testcontainers 확장에 맡기는 순간 이 위험을 안고 가는 거고, 생명주기를 Spring(정적 초기화 블록 + `@ServiceConnection`, `@Bean`, 또는 `@Testcontainers` 없는 `@ImportTestcontainers`)에 맡기면 이 위험에서 벗어난다.\n\n---\n\n# withReuse\n세 방식 중 뭘 쓰든, 별개로 컨테이너 자체를 테스트 스위트가 끝나도 계속 살려두는 옵션이 있다. `.withReuse(true)`를 걸고, 로컬 홈 디렉토리에 `~/.testcontainers.properties` 파일을 만들어서 `testcontainers.reuse.enable=true`를 설정하면, Testcontainers가 정리 담당인 Ryuk 컨테이너를 아예 안 띄워서 컨테이너가 JVM이 끝나도 안 죽는다. 그러면 다음번 테스트 실행 때도 같은 설정이면 그 컨테이너를 그대로 재사용한다.\n\n이건 앞의 세 패턴과는 다른 이야기다.\n세 패턴이 같은 실행 안에서 여러 테스트 클래스가 공유하는가의 문제라면, `withReuse`는 테스트 실행 자체가 끝나도 컨테이너가 살아남는가의 문제다. 다만 이 기능은 아직 실험적(experimental)이고, 매번 새로운 환경에서 컨테이너를 새로 받는 CI 환경에는 안 맞는다고 한다. 로컬 개발 중 반복 실행 속도를 올리는 용도로 보는 게 맞는 것 같다.\n\n---\n\n# MSA/멀티모듈에서는 어떻게?? (testFixtures)\n여기까지는 한 모듈 안에서 테스트 클래스끼리 컨테이너를 공유하는 얘기였다. 근데 서비스가 여러 모듈(MSA면 서비스별 모듈)로 나뉘어 있으면, 이 컨테이너 정의(인터페이스 컴포지션이든 뭐든)를 모듈 하나에만 두고 다른 모듈들이 가져다 쓰고 싶을 때가 생긴다. 이럴 때 쓰는 게 Gradle의 `java-test-fixtures` 플러그인이다.\n\n```kotlin\n// libs/test-support/build.gradle.kts\nplugins {\n    id("java-test-fixtures")\n}\n\ndependencies {\n    testFixturesApi("org.springframework.boot:spring-boot-starter-test")\n    testFixturesApi("org.springframework.boot:spring-boot-testcontainers")   // @ServiceConnection, BOM 적용\n    testFixturesApi("org.testcontainers:testcontainers")\n    testFixturesApi("org.testcontainers:jdbc")\n    testFixturesApi("org.testcontainers:junit-jupiter")\n    testFixturesApi("org.testcontainers:mysql")\n    testFixturesApi("org.testcontainers:kafka")\n    testFixturesApi("org.testcontainers:mongodb")\n    testFixturesApi("junit:junit")\n    // .................\n}\n```\n\n## 왜 그냥 `test` 소스셋에 두면 안 되나??\nGradle의 기본 `test` 소스셋은 그 모듈 안에서만 쓰라고 만들어진 거라, 다른 모듈이 의존성으로 끌어다 쓸 수가 없다. `java-test-fixtures` 플러그인을 적용하면 `main`, `test`와는 별개로 **`testFixtures`라는 소스셋**이 하나 더 생기는데(디렉토리는 `src/testFixtures/java`), 이건 처음부터 다른 모듈이 가져다 쓸 수 있게 만들어진 소스셋이다. 그래서 컨테이너 인터페이스 같은 재사용 코드는 `test`가 아니라 여기에 둔다.\n\n## 왜 `api`를 써야하지?\n`testFixturesApi`와 `testFixturesImplementation` 둘 다 있는데, 여기서는 전부 `Api`를 썼다. 이유는 이 모듈의 testFixtures가 다른 모듈에 노출해야 하는 타입을 다루기 때문이다. `MySQLContainer`, `KafkaContainer` 같은 타입을 가져다 쓰는 쪽(소비하는 모듈)의 코드에서 이 타입이 직접 보여야 하는데, `testFixturesImplementation`으로 선언하면 그 의존성이 밖으로 안 드러나서 소비하는 쪽에서 컴파일 에러가 난다. `java-library` 플러그인의 `api`/`implementation` 구분과 똑같은 원리다.\n\n`spring-boot-testcontainers`를 넣은 이유는 `@ServiceConnection`을 쓰려면 이 모듈이 필요하기 때문이고, 주석에 적어둔 것처럼 여기서 Spring Boot의 BOM(의존성 버전 관리)도 같이 적용되니까 이 모듈에 기대는 다른 모듈들도 버전을 따로 안 맞춰도 된다는 이점이 있다.\n\n## 쓰고싶은 쪽에서 사용 방법\n```kotlin\n// 다른 모듈의 build.gradle.kts\ndependencies {\n    testImplementation(testFixtures(project(":libs:test-support")))\n}\n```\n\n`testFixtures(project(...))`라는 게 핵심이다. 그냥 `project(":libs:test-support")`라고만 쓰면 그 모듈의 `main` 소스셋(운영 코드)을 가져오는 거고, `testFixtures(...)`로 감싸야 그 모듈의 testFixtures 아티팩트를 가져온다. 그리고 이걸 받는 쪽에서 `testImplementation`으로 선언했으니, 이 모듈의 `test` 소스셋 안에서만 그 컨테이너 인터페이스를 쓸 수 있게 되는 거다.\n\n## 유의할 점\n- `java-test-fixtures` 플러그인은 컨테이너를 두는 모듈에 적용해야 한다.\n  - 쓰는 쪽 모듈에는 이 플러그인이 필요 없고, 그냥 `testFixtures(project(...))`로 의존성만 추가하면 된다.\n- 버전 정합성을 이 모듈이 책임지게 된다.\n  - 여러 서비스 모듈이 다 이 공유 모듈에 기대므로, Testcontainers나 Spring Boot 버전을 올릴 때 이 모듈 하나만 바꾸면 전체에 반영된다는 장점이 있지만, 반대로 이 모듈이 프로젝트 전체의 병목이 될 수도 있다\n- 컨테이너 생명주기 원칙은 그대로 적용된다.\n  - 공유 모듈에 인터페이스 컴포지션으로 정의해뒀다고 해도, 앞서 짚은 Context Caching 문제(`@Testcontainers`/`@Container`를 어떻게 조합하느냐)는 똑같이 적용된다. 여러 서비스 모듈이 같은 정의를 가져다 쓰는 거라, 이 정의 하나가 잘못돼 있으면 그 문제가 모든 소비 모듈에 그대로 퍼진다.\n\n---\n\n# 그래서 뭐가 좋은걸까?\n찾아본 바로는 이렇게 정리되는 것 같다.\n\n- 상속 방식은 역사적으로 가장 오래되고 널리 퍼진 방법이라, 예제나 블로그 글에서 여전히 제일 많이 보인다. 구현이 직관적이라 처음 배우기엔 좋다.\n- Spring Bean 방식은 공식 문서가 명시적으로 우선 권장하는 방법이다. 특히 애플리케이션 빈이 컨테이너 기능에 실제로 의존하는 상황(연결이 끊기면 안 되는 경우)이라면 이쪽이 생명주기 보장 면에서 제일 안전하다.\n- 인터페이스 컴포지션은 비교적 최근에 공식 문서에 정식으로 실린 패턴이고, 여러 컨테이너를 유연하게 조합해야 하는 프로젝트에서 점점 더 많이 채택되는 것 같다. 자바가 다중 상속을 지원하지 않는다는 근본적인 제약을 생각하면, 컨테이너 종류가 늘어날수록 상속보다 이쪽이 구조적으로 더 유리해 보인다.\n\n결국 세 방식 다 공식적으로 문서화 된 방법이라는 것이다. 다만, 공식 문서가 미는 최신 방식이 항상 모든 상황에 우월한 건 아닌 것 같다. Spring 컨텍스트 없이 순수 Testcontainers만으로 동작한다는 특성은 상속과 인터페이스를 사용하는 방법 둘 다 공유하는 지점이고, 이건 Spring Bean 방법에는 없는 특징이다. 정답이 하나로 정해져 있다기보다는, Spring을 꼭 써야 하는지, 프로젝트가 컨테이너를 몇 종류나 쓰는지, 애플리케이션 빈이 그 컨테이너에 얼마나 밀접하게 의존하는지에 따라 고르면 될 것 같다.\n\n---\n\n# 정리\n- 매번 새로 띄우는 기본형은 테스트 클래스가 늘어날수록 반복 기동 비용이 쌓인다.\n- 상속은 직관적이지만 자바의 단일 상속 제약 때문에 유연성이 떨어지고, `@Testcontainers`/`@Container` 애노테이션과 같이 쓰면 안 된다는 함정이 있다.\n- Spring Bean(전역 공유)은 생명주기가 Spring 컨텍스트에 명시적으로 묶여서 가장 안전하지만, 진짜 공유 여부는 Spring의 테스트 컨텍스트 캐싱 규칙에 달려있다.\n- 인터페이스 컴포지션은 여러 컨테이너를 자유롭게 조합할 수 있고, Spring Boot 공식 문서에도 나온 정식 패턴이다.\n- `withReuse(true)`는 이 세 패턴과 별개로, 테스트 실행이 끝나도 컨테이너를 살려두는 실험적 옵션이다. -> CI에는 부적합\n\n결국 세 방식 다 컨테이너를 어떻게 여러 테스트가 같이 쓰게 만들 것인가라는 같은 문제를 다른 자바 기능(상속, DI, 인터페이스)으로 푼 것뿐이라, 프로젝트 상황에 맞게 고르면 되는 것 같다.\n\n\n# 참고\n> - [Testcontainers container lifecycle management using JUnit 5](https://testcontainers.com/guides/testcontainers-container-lifecycle/)\n> - [Improved Testcontainers Support in Spring Boot 3.1](https://spring.io/blog/2023/06/23/improved-testcontainers-support-in-spring-boot-3-1/)\n> - [Gradle 공식 문서 — Testing in Java & JVM projects (Test Fixtures)](https://docs.gradle.org/current/userguide/java_testing.html)\n> - [Spring Boot 공식 문서 — Service Connections](https://docs.spring.io/spring-boot/reference/testing/testcontainers.html)\n> - [ServiceConnection API 문서](https://docs.spring.io/spring-boot/api/java/org/springframework/boot/testcontainers/service/connection/ServiceConnection.html)',X6=`---
+- [Spring Framework, Testing: Transaction Management](https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/tx.html)
+- [Spring Framework, Testing: Context Caching](https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/ctx-management/caching.html)
+- [JUnit 5 User Guide, Parallel Execution](https://junit.org/junit5/docs/current/user-guide/#writing-tests-parallel-execution)
+- [Gradle, Testing in Java & JVM projects](https://docs.gradle.org/current/userguide/java_testing.html)`,Y6='---\ndate: 2026-07-12T23:39:19+09:00\ntitle: TestContainers 재사용 패턴 비교\nthumbnail: /blog/images/testcontainers.png\n---\n\n# Intro\n통합 테스트를 짤 때마다 컨테이너를 매번 새로 띄우면 테스트 스위트 전체가 눈에 띄게 느려진다. 그래서 여러 테스트 클래스가 같은 컨테이너를 공유하게 만드는 방법을 찾아보다가, 크게 세 가지 방식(상속, 전역 공유용 별도 클래스, 인터페이스 컴포지션)을 써봤다. \n\n그래서 이 세 가지를 실제로 비교해보고, 공식 문서 기준으로는 뭘 권장하는지, 실무에서는 어떤 게 더 널리 쓰이는지 정리해보려고 한다.\n\n---\n\n# 왜 재사용이 필요할까?\n가장 기본적인 형태는 테스트 클래스 안에 `@Testcontainers` + `@Container`를 바로 붙이는 거다.\n\n```java\n@Testcontainers\n@SpringBootTest\nclass OrderControllerTest {\n\n    @Container\n    static MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.0");\n\n    @Test\n    void someTest() { /* ... */ }\n}\n```\n\n이렇게 하면 이 컨테이너는 이 클래스가 실행되는 동안만 살아있고, 클래스가 끝나면 Testcontainers 확장이 알아서 정지시킨다. 문제는 다른 테스트 클래스(`PaymentControllerTest` 등)도 같은 MySQL이 필요하면, 거기서도 또 새로 띄운다는 거다. 클래스 수가 늘어날수록 컨테이너를 반복해서 기동하는 시간이 그대로 쌓인다.\n\n\n---\n\n# 예전엔 프로퍼티를 직접 매핑했다\n세 가지 재사용 패턴을 보기 전에 짚고 갈 게 하나 있다. 컨테이너를 띄우는 것과, 그 컨테이너의 접속 정보(URL, 포트, 계정)를 스프링 애플리케이션에 실제로 연결하는 건 별개의 일이다. `@ServiceConnection`이 나오기 전에는(Spring Boot 3.1, 2023년 6월 이전) 이 연결을 `@DynamicPropertySource`로 사람이 직접 매핑해야 했다.\n\n```java\n@DynamicPropertySource\nstatic void configureProperties(DynamicPropertyRegistry registry) {\n    registry.add("spring.datasource.url", mysql::getJdbcUrl);\n    registry.add("spring.datasource.username", mysql::getUsername);\n    registry.add("spring.datasource.password", mysql::getPassword);\n}\n```\n\n이 방식의 문제는 프로퍼티 이름(`spring.datasource.url` 같은)을 문자열로 직접 타이핑해야 한다는 거다. `spring.datasource.url`을 `spring.datasource.urls`처럼 오타 내도 컴파일은 멀쩡히 되고, 테스트를 돌려봐야 연결이 안 되는 걸로 뒤늦게 알게 된다. 그리고 Redis, Kafka처럼 컨테이너 종류가 늘어날수록 이 매핑 코드도 그만큼 반복해서 늘어난다.\n\nSpring Boot에서 이 문제를 정확히 짚어서 낸 게 `@ServiceConnection`이다. Spring Boot 3.1 공식 블로그 제목이 아예 Improved Testcontainers Support였을 정도로, 이 보일러플레이트를 없애는 게 이 기능이 나온 이유였다고 한다. 컨테이너 필드나 빈에 `@ServiceConnection`만 붙이면, 프로퍼티 이름 매핑 자체를 Spring이 컨테이너 타입을 보고 알아서 해준다.그리고 이 매핑 정보를 우리 코드가 아니라 Spring Boot가 들고 있으니, 나중에 Spring Boot 버전이 올라가면서 프로퍼티 이름이 바뀌어도 우리가 신경 쓸 일이 없어진다.\n\n그래서 뒤에 나오는 방법들의 코드에 `@ServiceConnection`이 들어가 있는 거고, 상속하는 방법)에서도 필드에 그대로 붙이면 똑같이 쓸 수 있다.\n\n---\n# 사용 방법\n## 상속 (Abstract 클래스)\n공식 Testcontainers 문서에서 오래전부터 소개해온 방식이다. 추상 클래스에 `static` 초기화 블록으로 컨테이너를 딱 한 번만 띄우고, 각 테스트 클래스가 이 추상 클래스를 상속한다.\n\n```java\nabstract class AbstractIntegrationTest {\n\n    static final MySQLContainer<?> MYSQL;\n\n    static {\n        MYSQL = new MySQLContainer<>("mysql:8.0");\n        MYSQL.start();   // 클래스가 로드될 때 딱 한 번 실행\n    }\n}\n```\n\n```java\n@SpringBootTest\nclass OrderControllerTest extends AbstractIntegrationTest {\n\n    @Test\n    void someTest() {\n        // MYSQL은 이미 떠 있는 상태\n    }\n}\n```\n\n여기서 중요한 함정이 하나 있다. 이 패턴을 `@Testcontainers`/`@Container` 애노테이션과 같이 쓰면 안 된다. 정확한 이유를 따져보면 두 단계로 나뉜다.\n\n첫 번째는, `static` 필드에 `@Container`를 붙이면 그 필드가 부모 클래스에 선언돼 있어도 Testcontainers Extension은 클래스 단위(per-class)로 생명주기를 관리한다는 거다. 그래서 이 부모 클래스를 상속한 자식 클래스가 실행될 때마다 컨테이너가 떴다가, 그 클래스가 끝나면 죽는 걸 반복한다. 여기까지는 Extension이 원래 그렇게 동작하도록 만들어진 거라 문제가 아니다.\n\n진짜 문제는 두 번째 단계에서 생긴다. 컨테이너는 자식 클래스가 바뀔 때마다 새로 죽고 새로 뜨는데, Spring의 테스트 컨텍스트 캐싱(Context Caching) 메커니즘은 부모 클래스(설정)가 같으니 같은 `ApplicationContext`를 재사용해도 된다고 판단해버린다. 그래서 두 번째 자식 클래스는 이전 컨테이너의 접속 정보를 담고 있는, 이미 캐싱된 컨텍스트를 그대로 재사용하려고 하는데, 정작 그 컨테이너는 이미 죽고 새로운 컨테이너가 다른 포트로 떠 있는 상태다. 이 어긋남 때문에 연결 오류가 난다. 그래서 이 패턴은 애노테이션 없이, `static` 블록으로 직접 시작하고 멈추는 시점은 Testcontainers의 Ryuk 컨테이너가 JVM 종료 시점에 알아서 정리하도록 맡겨야 한다.\n\n\n이 방식은 코드가 짧고 직관적이라 처음 배울 때 가장 이해하기 쉬웠다. 다만 자바는 클래스 다중 상속이 안 되기 때문에, 테스트 클래스가 이미 다른 베이스 클래스를 상속하고 있다면 이 패턴을 못 쓴다. 그리고 프로젝트가 커질수록 모든 통합 테스트는 이 거대한 베이스 클래스 하나를 상속하는 구조가 되기 쉬운데, 그러면 그 베이스 클래스가 점점 여러 컨테이너를 다 짊어지는 God class가 되기 쉬운 것 같다.\n\n이 방식이 실제로 유리한 지점도 하나 있긴 하다.\n순수하게 `static` 블록만으로 동작하기 때문에, Spring 컨텍스트가 아예 없어도 그대로 쓸 수 있다.Spring Bean을 쓰는 방법은 컨테이너를 빈으로 등록하는 방식이라 애초에 Spring 테스트 컨텍스트가 있어야 성립하는데, 이 방식은 순수 자바/JUnit 테스트에서도 그대로 동작한다. 다만 이것도 상속만의 고유한 장점은 아니다.\n인터페이스를 사용하는 방법도 `@ImportTestcontainers` 없이 그냥 `implements`만 하는 거라면 똑같이 Spring 없이 동작한다. 그러니 정확히는 Spring 빈으로 관리하는 방식 vs 순수 Testcontainers 생명주기로 관리하는 방식(상속,인터페이스 컴포지션)의 차이지, 상속과 인터페이스 사이의 차이는 아니다. 초기화 로직을 자유롭게 짤 수 있다는 것 자체도 상속만의 장점은 아니다.\n\n---\n\n## 전역 공유 (Spring Bean으로 관리)\nSpring Boot 공식 문서에서 제일 먼저 소개하는 방법이다. 컨테이너를 `@TestConfiguration` 클래스 안에 `@Bean`으로 등록하고, 필요한 테스트 클래스에서 `@Import`로 갖다 쓰는 방식이다. 상속이 아니라 합성(composition)이다.\n\n```java\n@TestConfiguration(proxyBeanMethods = false)\nclass ContainerConfiguration {\n\n    @Bean\n    @ServiceConnection\n    MySQLContainer<?> mysqlContainer() {\n        return new MySQLContainer<>("mysql:8.0");\n    }\n}\n```\n\n```java\n@SpringBootTest\n@Import(ContainerConfiguration.class)\nclass OrderControllerTest {\n\n    @Test\n    void someTest() { /* ... */ }\n}\n```\n\n이 방식의 핵심은 컨테이너 생명주기를 Spring이 직접 관리하는 것이다. 컨테이너 빈은 다른 모든 빈보다 먼저 뜨고, 다른 모든 빈이 정리된 뒤에 내려간다. 그래서 상속으로 하는 방법에서 조심해야 했던 컨테이너는 죽었는데 캐싱된 컨텍스트가 그걸 참조하는 문제가 구조적으로 안 생긴다. Spring Boot 공식 문서도 애플리케이션 빈이 컨테이너 기능에 의존한다면 컨테이너를 Spring 빈으로 구성하는 쪽을 우선하라고 명시하고 있다.\n\n다만 이것도 컴포넌트가 전역적으로 딱 하나만 뜬다는 게 코드에 명시적으로 보장된 장치는 아니다. 같은 `@TestConfiguration`을 `@Import`하는 테스트 클래스들끼리, Spring의 테스트 컨텍스트 캐싱 메커니즘(설정이 같으면 컨텍스트를 재사용하는 규칙) 덕분에 결과적으로 공유되는 것이다. 그래서 이 방식을 제대로 쓰려면 Spring 테스트 컨텍스트 캐싱이 어떻게 동작하는지를 어느 정도 알아야 하는 것 같다.\n\n---\n\n## 인터페이스 컴포지션\n컨테이너를 인터페이스 안에 `static` 필드로 선언하고, 테스트 클래스가 그 인터페이스를 구현(`implements`)하는 방식이다.Spring Boot 공식 문서에 Testcontainers에서 흔히 쓰이는 패턴으로 그대로 소개되고있다.\n\n```java\ninterface MySqlTestContainer {\n\n    @Container\n    @ServiceConnection\n    MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0");\n}\n```\n\n`@ServiceConnection`은 필드에도, `@Bean` 메서드에도 붙일 수 있는데, 이 둘이 완전히 동등하지는 않다는 걸 찾아보다 알게 됐다. `@Bean` 메서드 방식은 Spring이 그 메서드를 미리 호출해서 컨테이너 인스턴스를 들여다보지 않는다(호출하면 즉시 초기화 문제가 생기기 때문이라고 한다). 그래서 `@Bean` 방식은 메서드에 선언된 반환 타입만 보고 어떤 연결 정보를 만들지 판단한다.\n`MySQLContainer`처럼 타입 자체가 DB 종류를 말해주는 전용 클래스면 문제없지만, `GenericContainer`(Redis처럼 전용 클래스가 따로 없는 경우)를 반환 타입으로 쓰면 그 타입만으로는 안에 뭐가 들었는지 Spring이 알 방법이 없다.\n\n반면 `static` 필드 방식(인터페이스 컴포지션 포함)은 이미 만들어진 인스턴스에 바로 접근할 수 있어서, Docker 이미지 이름의 레포지토리 부분(예: `redis:7-alpine` -> `redis`)을 보고 자동으로 추론해준다. 그래서 필드 방식에서는 웬만한 경우 별도 설정 없이도 잘 동작한다. 다만 이미지 이름이 표준적이지 않은 커스텀 이미지를 쓴다면, 필드 방식에서도 `@ServiceConnection(name = "redis")`처럼 `name` 속성으로 명시적으로 알려줘야 한다. `@Bean` 방식에서 `GenericContainer`를 꼭 써야 한다면 이 `name` 속성이 사실상 필수인 셈이다. (`type` 속성은 이것과는 다른 용도로, 여러 `ConnectionDetails` 후보 중 특정 타입으로 제한하고 싶을 때 쓰는 별도 옵션이다.)\n\n컨테이너 종류에 따라서는 이렇게 인터페이스 컴포지션(필드 기반) 쪽이 오히려 Spring Bean 방식보다 더 안정적으로 동작하는 지점도 있는 셈이다.\n\n\n```java\n@SpringBootTest\nclass OrderControllerTest implements MySqlTestContainer {\n\n    @Test\n    void someTest() { /* ... */ }\n}\n```\n\n인터페이스는 자바에서 여러 개를 동시에 구현할 수 있다.그래서 `MySqlTestContainer`, `KafkaTestContainer`, `RedisTestContainer`처럼 컨테이너별로 인터페이스를 쪼개두면, 테스트 클래스는 자기가 필요한 것만 골라서 조합할 수 있다.\n\n```java\n@SpringBootTest\nclass OrderServiceTest implements MySqlTestContainer, RedisTestContainer, KafkaTestContainer {\n\n    @Test\n    void someTest() { /* 세 컨테이너 다 사용 가능 */ }\n}\n```\n\n상속 방식이었다면 MySQL만 필요한 테스트, MySQL+Redis가 필요한 테스트, 셋 다 필요한 테스트 등등 모든 테스트마다 조합별로 별도의 abstract 클래스를 계속 만들어야 했을 거다. 인터페이스는 그때그때 필요한 것만 `implements`에 나열하면 되니까, 조합이 늘어나도 새 클래스를 따로 안 만들어도 된다.\n\nSpring 설정 클래스에서 이 인터페이스를 쓰고 싶다면 `@ImportTestcontainers`로 가져다 쓸 수도 있다. 이건 인터페이스에 선언된 `static` 필드들(컨테이너 필드, `@DynamicPropertySource` 메서드)을 Spring이 스캔해서 직접 빈으로 등록해주는 애노테이션이다.\n\n```java\n@TestConfiguration(proxyBeanMethods = false)\n@ImportTestcontainers(MySqlTestContainer.class)\nclass ContainerConfiguration {\n}\n```\n\n이 방식은 조합의 자유도가 가장 높다는 게 장점인 것 같다. 다만 인터페이스에 `static` 필드로 선언하는 방식이다 보니, 필드 초기화 시점이나 인터페이스 여러 개를 동시에 구현했을 때 초기화 순서 같은 부분은 클래스 상속보다 살짝 덜 직관적으로 느껴질 수 있다.\n\n### 중요한 내용\n> `@ImportTestcontainers`를 썼다고 해서 무조건 Spring이 생명주기를 관리해주는 게 아니다. 공식 문서에 정확히 이렇게 나와 있다.\n> Testcontainers가 제공하는 애노테이션과 확장(`@Testcontainers`, `@Container`)을 함께 썼다면, 생명주기는 전적으로 Testcontainers가 관리한다.\n> 즉, 인터페이스에 선언된 필드에 `@Container`가 붙어 있고, 테스트 클래스에 `@Testcontainers` 확장까지 같이 붙였다면, `@ImportTestcontainers`를 썼어도 상속하는 방법과 똑같이 클래스 단위로 껐다 켜는 생명주기를 그대로 물려받는다. 그러면 상속하는 방법에서 짚었던 Context Caching 어긋남이 인터페이스 방식에서도 똑같이 재현될 수 있다. `@ImportTestcontainers`의 진짜 이점(Spring이 관리하는 안전한 생명주기)을 온전히 받으려면, 테스트 클래스에 `@Testcontainers` 확장 애노테이션을 같이 붙이지 않아야 한다.\n> 정리하면, 어떤 방식을 쓰든 결국 Context Caching의 규칙을 깨뜨리지 않는 구조여야 한다는 원칙 하나로 귀결된다. 상속이든 인터페이스든, 생명주기를 Testcontainers 확장에 맡기는 순간 이 위험을 안고 가는 거고, 생명주기를 Spring(정적 초기화 블록 + `@ServiceConnection`, `@Bean`, 또는 `@Testcontainers` 없는 `@ImportTestcontainers`)에 맡기면 이 위험에서 벗어난다.\n\n---\n\n# withReuse\n세 방식 중 뭘 쓰든, 별개로 컨테이너 자체를 테스트 스위트가 끝나도 계속 살려두는 옵션이 있다. `.withReuse(true)`를 걸고, 로컬 홈 디렉토리에 `~/.testcontainers.properties` 파일을 만들어서 `testcontainers.reuse.enable=true`를 설정하면, Testcontainers가 정리 담당인 Ryuk 컨테이너를 아예 안 띄워서 컨테이너가 JVM이 끝나도 안 죽는다. 그러면 다음번 테스트 실행 때도 같은 설정이면 그 컨테이너를 그대로 재사용한다.\n\n이건 앞의 세 패턴과는 다른 이야기다.\n세 패턴이 같은 실행 안에서 여러 테스트 클래스가 공유하는가의 문제라면, `withReuse`는 테스트 실행 자체가 끝나도 컨테이너가 살아남는가의 문제다. 다만 이 기능은 아직 실험적(experimental)이고, 매번 새로운 환경에서 컨테이너를 새로 받는 CI 환경에는 안 맞는다고 한다. 로컬 개발 중 반복 실행 속도를 올리는 용도로 보는 게 맞는 것 같다.\n\n---\n\n# MSA/멀티모듈에서는 어떻게?? (testFixtures)\n여기까지는 한 모듈 안에서 테스트 클래스끼리 컨테이너를 공유하는 얘기였다. 근데 서비스가 여러 모듈(MSA면 서비스별 모듈)로 나뉘어 있으면, 이 컨테이너 정의(인터페이스 컴포지션이든 뭐든)를 모듈 하나에만 두고 다른 모듈들이 가져다 쓰고 싶을 때가 생긴다. 이럴 때 쓰는 게 Gradle의 `java-test-fixtures` 플러그인이다.\n\n```kotlin\n// libs/test-support/build.gradle.kts\nplugins {\n    id("java-test-fixtures")\n}\n\ndependencies {\n    testFixturesApi("org.springframework.boot:spring-boot-starter-test")\n    testFixturesApi("org.springframework.boot:spring-boot-testcontainers")   // @ServiceConnection, BOM 적용\n    testFixturesApi("org.testcontainers:testcontainers")\n    testFixturesApi("org.testcontainers:jdbc")\n    testFixturesApi("org.testcontainers:junit-jupiter")\n    testFixturesApi("org.testcontainers:mysql")\n    testFixturesApi("org.testcontainers:kafka")\n    testFixturesApi("org.testcontainers:mongodb")\n    testFixturesApi("junit:junit")\n    // .................\n}\n```\n\n## 왜 그냥 `test` 소스셋에 두면 안 되나??\nGradle의 기본 `test` 소스셋은 그 모듈 안에서만 쓰라고 만들어진 거라, 다른 모듈이 의존성으로 끌어다 쓸 수가 없다. `java-test-fixtures` 플러그인을 적용하면 `main`, `test`와는 별개로 **`testFixtures`라는 소스셋**이 하나 더 생기는데(디렉토리는 `src/testFixtures/java`), 이건 처음부터 다른 모듈이 가져다 쓸 수 있게 만들어진 소스셋이다. 그래서 컨테이너 인터페이스 같은 재사용 코드는 `test`가 아니라 여기에 둔다.\n\n## 왜 `api`를 써야하지?\n`testFixturesApi`와 `testFixturesImplementation` 둘 다 있는데, 여기서는 전부 `Api`를 썼다. 이유는 이 모듈의 testFixtures가 다른 모듈에 노출해야 하는 타입을 다루기 때문이다. `MySQLContainer`, `KafkaContainer` 같은 타입을 가져다 쓰는 쪽(소비하는 모듈)의 코드에서 이 타입이 직접 보여야 하는데, `testFixturesImplementation`으로 선언하면 그 의존성이 밖으로 안 드러나서 소비하는 쪽에서 컴파일 에러가 난다. `java-library` 플러그인의 `api`/`implementation` 구분과 똑같은 원리다.\n\n`spring-boot-testcontainers`를 넣은 이유는 `@ServiceConnection`을 쓰려면 이 모듈이 필요하기 때문이고, 주석에 적어둔 것처럼 여기서 Spring Boot의 BOM(의존성 버전 관리)도 같이 적용되니까 이 모듈에 기대는 다른 모듈들도 버전을 따로 안 맞춰도 된다는 이점이 있다.\n\n## 쓰고싶은 쪽에서 사용 방법\n```kotlin\n// 다른 모듈의 build.gradle.kts\ndependencies {\n    testImplementation(testFixtures(project(":libs:test-support")))\n}\n```\n\n`testFixtures(project(...))`라는 게 핵심이다. 그냥 `project(":libs:test-support")`라고만 쓰면 그 모듈의 `main` 소스셋(운영 코드)을 가져오는 거고, `testFixtures(...)`로 감싸야 그 모듈의 testFixtures 아티팩트를 가져온다. 그리고 이걸 받는 쪽에서 `testImplementation`으로 선언했으니, 이 모듈의 `test` 소스셋 안에서만 그 컨테이너 인터페이스를 쓸 수 있게 되는 거다.\n\n## 유의할 점\n- `java-test-fixtures` 플러그인은 컨테이너를 두는 모듈에 적용해야 한다.\n  - 쓰는 쪽 모듈에는 이 플러그인이 필요 없고, 그냥 `testFixtures(project(...))`로 의존성만 추가하면 된다.\n- 버전 정합성을 이 모듈이 책임지게 된다.\n  - 여러 서비스 모듈이 다 이 공유 모듈에 기대므로, Testcontainers나 Spring Boot 버전을 올릴 때 이 모듈 하나만 바꾸면 전체에 반영된다는 장점이 있지만, 반대로 이 모듈이 프로젝트 전체의 병목이 될 수도 있다\n- 컨테이너 생명주기 원칙은 그대로 적용된다.\n  - 공유 모듈에 인터페이스 컴포지션으로 정의해뒀다고 해도, 앞서 짚은 Context Caching 문제(`@Testcontainers`/`@Container`를 어떻게 조합하느냐)는 똑같이 적용된다. 여러 서비스 모듈이 같은 정의를 가져다 쓰는 거라, 이 정의 하나가 잘못돼 있으면 그 문제가 모든 소비 모듈에 그대로 퍼진다.\n\n---\n\n# 그래서 뭐가 좋은걸까?\n찾아본 바로는 이렇게 정리되는 것 같다.\n\n- 상속 방식은 역사적으로 가장 오래되고 널리 퍼진 방법이라, 예제나 블로그 글에서 여전히 제일 많이 보인다. 구현이 직관적이라 처음 배우기엔 좋다.\n- Spring Bean 방식은 공식 문서가 명시적으로 우선 권장하는 방법이다. 특히 애플리케이션 빈이 컨테이너 기능에 실제로 의존하는 상황(연결이 끊기면 안 되는 경우)이라면 이쪽이 생명주기 보장 면에서 제일 안전하다.\n- 인터페이스 컴포지션은 비교적 최근에 공식 문서에 정식으로 실린 패턴이고, 여러 컨테이너를 유연하게 조합해야 하는 프로젝트에서 점점 더 많이 채택되는 것 같다. 자바가 다중 상속을 지원하지 않는다는 근본적인 제약을 생각하면, 컨테이너 종류가 늘어날수록 상속보다 이쪽이 구조적으로 더 유리해 보인다.\n\n결국 세 방식 다 공식적으로 문서화 된 방법이라는 것이다. 다만, 공식 문서가 미는 최신 방식이 항상 모든 상황에 우월한 건 아닌 것 같다. Spring 컨텍스트 없이 순수 Testcontainers만으로 동작한다는 특성은 상속과 인터페이스를 사용하는 방법 둘 다 공유하는 지점이고, 이건 Spring Bean 방법에는 없는 특징이다. 정답이 하나로 정해져 있다기보다는, Spring을 꼭 써야 하는지, 프로젝트가 컨테이너를 몇 종류나 쓰는지, 애플리케이션 빈이 그 컨테이너에 얼마나 밀접하게 의존하는지에 따라 고르면 될 것 같다.\n\n---\n\n# 정리\n- 매번 새로 띄우는 기본형은 테스트 클래스가 늘어날수록 반복 기동 비용이 쌓인다.\n- 상속은 직관적이지만 자바의 단일 상속 제약 때문에 유연성이 떨어지고, `@Testcontainers`/`@Container` 애노테이션과 같이 쓰면 안 된다는 함정이 있다.\n- Spring Bean(전역 공유)은 생명주기가 Spring 컨텍스트에 명시적으로 묶여서 가장 안전하지만, 진짜 공유 여부는 Spring의 테스트 컨텍스트 캐싱 규칙에 달려있다.\n- 인터페이스 컴포지션은 여러 컨테이너를 자유롭게 조합할 수 있고, Spring Boot 공식 문서에도 나온 정식 패턴이다.\n- `withReuse(true)`는 이 세 패턴과 별개로, 테스트 실행이 끝나도 컨테이너를 살려두는 실험적 옵션이다. -> CI에는 부적합\n\n결국 세 방식 다 컨테이너를 어떻게 여러 테스트가 같이 쓰게 만들 것인가라는 같은 문제를 다른 자바 기능(상속, DI, 인터페이스)으로 푼 것뿐이라, 프로젝트 상황에 맞게 고르면 되는 것 같다.\n\n\n# 참고\n- [Testcontainers container lifecycle management using JUnit 5](https://testcontainers.com/guides/testcontainers-container-lifecycle/)\n- [Improved Testcontainers Support in Spring Boot 3.1](https://spring.io/blog/2023/06/23/improved-testcontainers-support-in-spring-boot-3-1/)\n- [Gradle 공식 문서, Testing in Java & JVM projects (Test Fixtures)](https://docs.gradle.org/current/userguide/java_testing.html)\n- [Spring Boot 공식 문서, Service Connections](https://docs.spring.io/spring-boot/reference/testing/testcontainers.html)\n- [ServiceConnection API 문서](https://docs.spring.io/spring-boot/api/java/org/springframework/boot/testcontainers/service/connection/ServiceConnection.html)',X6=`---
 title: 블로그 이전
 date: 2026-06-10
 ---

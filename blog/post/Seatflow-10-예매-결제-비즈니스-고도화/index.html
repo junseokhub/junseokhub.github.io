@@ -32,7 +32,7 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-CEortbdO.js"></script>
+    <script type="module" crossorigin src="/assets/index-Bo3WtOtG.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BCM3qtSj.css">
   </head>
   <body>
@@ -51,7 +51,7 @@
 <p>이번 편은 새 기능을 더하는 게 아니다. 이미 있는 흐름의 구멍을 메워서, 예매가 결제를 거쳐 확정까지 정합성 있게 완결되도록 만든다.</p>
 <p>할인·쿠폰과 취소·환불은 이 토대가 갖춰진 다음에야 의미가 있어서 뒤로 미뤘다. 취소/환불은 좌석 반환과 결제 환불을 같이 되돌려야 하는, 본질이 Saga인 작업이라 별도 편에서 다룰 예정이다.</p>
 <hr/>
-<h1>결제가 끝나도 예매가 안 끝난다</h1>
+<h1>결제가 끝나도 예매가 안 끝난다.</h1>
 <p>결제 서비스는 결제가 끝나면 payment.completed를 발행한다. 그런데 이 이벤트를 받는 곳이 없었다.</p>
 <pre><code>payment 성공 -&gt; payment.completed 발행 -&gt; (아무도 안 받음) -&gt; reservation 영원히 PENDING
 </code></pre>
@@ -83,7 +83,7 @@ public void consume(String message) {
 <p>상태 전이 규칙(PENDING에서만 확정 가능, 취소된 건 확정 불가)을 도메인 메서드 안에 둔 것도 의도적이다. 이건 예매라는 객체가 지켜야 하는 불변 규칙이라 객체 자신이 갖는 게 맞다. 서비스나 컨슈머가 if status로 분기하면 그 규칙이 도메인 밖으로 노출된다.</p>
 <p>참고로 도메인에 가드가 존재해도 조회 시점과 수정 시점의 공백으로 상태가 꼬일 수 있으니까 낙관적락이나 쿼리 조건에 상태를 포함시키는 방법으로 방지할 수 도 있다.</p>
 <hr/>
-<h1>돈은 빠졌는데 이벤트가 유실된다</h1>
+<h1>돈은 빠졌는데 이벤트가 유실된다.</h1>
 <p>결제 서비스는 결제를 저장한 뒤 Kafka로 직접 발행하고 있었다.</p>
 <pre><code class="language-java">paymentRepository.save(payment);                  // DB 커밋
 kafkaTemplate.send(PAYMENT_COMPLETED, event);     // Kafka 직접 발행
@@ -92,7 +92,7 @@ kafkaTemplate.send(PAYMENT_COMPLETED, event);     // Kafka 직접 발행
 <p>결제는 돈이 걸린 흐름이라 이 정합성이 특히 중요하다. 그래서 Outbox로 바꿨다.</p>
 <h2>대안 비교</h2>
 <p>방법 정합성 비고</p>
-<table><thead><tr><th><strong>방법</strong></th><th> <strong>정합성</strong></th><th><strong>비고</strong></th></tr></thead><tbody><tr><td>dual-write 유지</td><td>깨짐</td><td>발행 실패 시 이벤트 유실</td></tr><tr><td>@TransactionalEventListener</td><td>부분적</td><td>커밋 후 발행, 그래도 발행 자체 실패는 못 막음</td></tr><tr><td>CDC (Debezium 등)</td><td>보장</td><td>인프라(커넥터) 추가, 운영 비용</td></tr><tr><td>Outbox</td><td>보장</td><td>이미 auth·show에서 쓰던 패턴</td></tr></tbody></table>
+<table><thead><tr><th>방법</th><th>정합성</th><th>비고</th></tr></thead><tbody><tr><td>dual-write 유지</td><td>깨짐</td><td>발행 실패 시 이벤트 유실</td></tr><tr><td>@TransactionalEventListener</td><td>부분적</td><td>커밋 후 발행, 그래도 발행 자체 실패는 못 막음</td></tr><tr><td>CDC (Debezium 등)</td><td>보장</td><td>인프라(커넥터) 추가, 운영 비용</td></tr><tr><td>Outbox</td><td>보장</td><td>이미 auth·show에서 쓰던 패턴</td></tr></tbody></table>
 <p>CDC도 정합성은 보장하지만 커넥터라는 인프라가 더 붙는다. 이미 auth(JPA)와 show(Mongo)에서 Outbox를 쓰고 있었고, 9편에서 포트-어댑터로 추상화까지 해둔 상태였다. 결제도 MySQL이라 auth의 JpaOutboxStore 패턴을 그대로 가져오면 된다. 새 인프라 없이 기존 자산을 재사용하는 게 좋다고 생각했다.</p>
 <pre><code class="language-java">@Transactional
 public Payment processPayment(...) {
