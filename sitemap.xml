@@ -11,7 +11,7 @@
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://junseokhub.github.io/blog/category/Database/RDS/</loc>
+    <loc>https://junseokhub.github.io/blog/category/Database/RDB/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
   </url>
@@ -69,6 +69,12 @@
     <loc>https://junseokhub.github.io/blog/category/Lab/Coupon%26Order/</loc>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://junseokhub.github.io/blog/post/InnoDB-%EB%9D%BD%EA%B3%BC-%EA%B2%A9%EB%A6%AC-%EC%88%98%EC%A4%80-%EB%8D%B0%EB%93%9C%EB%9D%BD-%EB%B6%84%EC%84%9D/</loc>
+    <lastmod>2026-10-12</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
   <url>
     <loc>https://junseokhub.github.io/blog/post/MySQL-%EA%B8%B0%EB%B3%B8-%EA%B0%9C%EB%85%90-InnoDB-%EA%B5%AC%EC%A1%B0-redo-log-binlog-2%EB%8B%A8%EA%B3%84-%EC%BB%A4%EB%B0%8B/</loc>
