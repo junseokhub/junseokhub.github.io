@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>복제 유실 대비 (반동기 복제, crash-safe replica, 백업과 시점 복구) | Record, Then Build</title>
+    <meta name="description" content="Intro 비동기 복제로 failover를 해보면 불편한 사실 하나를 마주하게 된다. 클라이언트는 커밋 성공을 받았는데, 그 트랜잭션이 어떤 replica에도 도착하기 전에 source가 사라지면, 새 source에는 그 데이터가 없" />
+    <meta property="og:title" content="복제 유실 대비 (반동기 복제, crash-safe replica, 백업과 시점 복구) | Record, Then Build" />
+    <meta property="og:description" content="Intro 비동기 복제로 failover를 해보면 불편한 사실 하나를 마주하게 된다. 클라이언트는 커밋 성공을 받았는데, 그 트랜잭션이 어떤 replica에도 도착하기 전에 source가 사라지면, 새 source에는 그 데이터가 없" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EB%B3%B5%EC%A0%9C-%EC%9C%A0%EC%8B%A4-%EB%8C%80%EB%B9%84-%EB%B0%98%EB%8F%99%EA%B8%B0-%EB%B3%B5%EC%A0%9C-crash-safe-replica-%EB%B0%B1%EC%97%85%EA%B3%BC-%EC%8B%9C%EC%A0%90-%EB%B3%B5%EA%B5%AC/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EB%B3%B5%EC%A0%9C-%EC%9C%A0%EC%8B%A4-%EB%8C%80%EB%B9%84-%EB%B0%98%EB%8F%99%EA%B8%B0-%EB%B3%B5%EC%A0%9C-crash-safe-replica-%EB%B0%B1%EC%97%85%EA%B3%BC-%EC%8B%9C%EC%A0%90-%EB%B3%B5%EA%B5%AC/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-ByhjUm6z.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Dh0mble2.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>복제 유실 대비 (반동기 복제, crash-safe replica, 백업과 시점 복구)</h1><p>Database/RDB · 2026-10-18</p><h1>Intro</h1>
+<p>비동기 복제로 failover를 해보면 불편한 사실 하나를 마주하게 된다. 클라이언트는 커밋 성공을 받았는데, 그 트랜잭션이 어떤 replica에도 도착하기 전에 source가 사라지면, 새 source에는 그 데이터가 없다. 사용자는 저장됐다는 응답을 받았는데, 그 데이터가 failover 한 번에 사라지는 거다.</p>
+<p>유실이 생기는 경로는 이것 말고도 있다. replica가 적용 도중에 죽었다가 살아나면서 같은 트랜잭션을 두 번 실행하거나, 누군가 실수로 테이블을 지웠는데 그 DROP이 복제를 타고 모든 replica에 그대로 퍼지는 경우다. 복제는 장애에는 강하지만 실수에는 아무런 보호가 되지 않는다.</p>
+<p>이번엔 이 세 가지 유실을 쿠버네티스 위의 source 1대, replica 2대 환경에서 각각 일으켜보고, 막는 방법을 정리해본다. 반동기 복제로 failover 유실을 막고, crash-safe 설정으로 replica 크래시를 견디고, 백업과 binlog 스트리밍으로 실수로 지운 데이터를 특정 시점까지 되살린다.</p>
+<p>각 실험은 가설, 절차, 관찰, 결과 순서로 정리했고, 결과 표의 관찰 칸은 직접 돌려서 채우도록 비워뒀다.</p>
+<hr/>
+<h1>유실은 어디서 생기나?</h1>
+<p>먼저 유실 경로를 나눠두면 각 대책이 어디를 막는지가 분명해진다.</p>
+<table><thead><tr><th>유실 경로</th><th>원인</th><th>대책</th></tr></thead><tbody><tr><td>source 크래시로 인한 유실</td><td>커밋이 디스크에 닿기 전에 죽음</td><td><code>sync_binlog = 1</code>, <code>innodb_flush_log_at_trx_commit = 1</code></td></tr><tr><td>failover로 인한 유실</td><td>커밋됐지만 replica로 넘어가기 전에 source가 사라짐</td><td>반동기 복제</td></tr><tr><td>replica 크래시로 인한 불일치</td><td>적용 위치와 데이터가 어긋난 채로 재시작</td><td>crash-safe replica 설정</td></tr><tr><td>사람의 실수</td><td>잘못된 DROP, UPDATE가 복제로 전파됨</td><td>백업 + binlog 보관 + 시점 복구</td></tr></tbody></table>
+<p>첫 번째는 서버 한 대의 내구성 문제라서, 이중 1 설정(두 값 모두 1, MySQL 8.x의 기본값)으로 지킨다. 이 글은 나머지 세 가지를 다룬다.</p>
+<hr/>
+<h1>실험 환경</h1>
+<p>MySQL 8.4 팟 세 개를 StatefulSet으로 띄우고 GTID를 켠다. 여기에 이번 실험을 위해 세 가지를 추가했다.</p>
+<ul>
+<li>반동기 복제 플러그인
+<ul>
+<li>어느 서버든 source가 될 수 있으니, source용과 replica용 플러그인을 세 서버 모두에 로드한다.</li>
+</ul>
+</li>
+<li>crash-safe 설정과 <code>shareProcessNamespace</code>
+<ul>
+<li>replica의 mysqld를 <code>kill -9</code>로 죽이는 실험을 하려면, 컨테이너 안에서 mysqld가 PID 1이 아니어야 한다. 리눅스는 PID 네임스페이스의 1번 프로세스에 대한 SIGKILL을 무시하기 때문이다.</li>
+</ul>
+</li>
+<li>백업 팟
+<ul>
+<li>백업 파일과 binlog 사본을 MySQL과 별개의 볼륨에 보관한다. MySQL 볼륨과 같이 사라지면 백업의 의미가 없다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-yaml"># lab-mysql-durability.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-mysql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  namespace: lab-mysql
+data:
+  common.cnf: |
+    [mysqld]
+    innodb_buffer_pool_size = 256M
+    gtid_mode = ON
+    enforce_gtid_consistency = ON
+    plugin-load-add = semisync_source.so
+    plugin-load-add = semisync_replica.so
+    relay_log_recovery = ON
+    sync_binlog = 1
+    innodb_flush_log_at_trx_commit = 1
+    binlog_expire_logs_seconds = 604800
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  namespace: lab-mysql
+spec:
+  clusterIP: None
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: lab-mysql
+spec:
+  serviceName: mysql
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      shareProcessNamespace: true
+      initContainers:
+        - name: init-config
+          image: mysql:8.4
+          command:
+            - bash
+            - -c
+            - |
+              ordinal=${HOSTNAME##*-}
+              cp /mnt/config-map/common.cnf /mnt/conf.d/
+              printf &#x27;[mysqld]\nserver_id=%d\nreport_host=%s.mysql\n&#x27; \
+                $((100 + ordinal)) &quot;$HOSTNAME&quot; &gt; /mnt/conf.d/server.cnf
+          volumeMounts:
+            - { name: conf, mountPath: /mnt/conf.d }
+            - { name: config-map, mountPath: /mnt/config-map }
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: mysql-root, key: password }
+            - name: MYSQL_DATABASE
+              value: lab
+          resources:
+            requests: { cpu: 300m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          readinessProbe:
+            exec:
+              command: [&quot;bash&quot;, &quot;-c&quot;, &quot;mysqladmin ping -uroot -p\&quot;$MYSQL_ROOT_PASSWORD\&quot; --silent&quot;]
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/mysql }
+            - { name: conf, mountPath: /etc/mysql/conf.d }
+      volumes:
+        - name: conf
+          emptyDir: {}
+        - name: config-map
+          configMap: { name: mysql-config }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [&quot;ReadWriteOnce&quot;]
+        storageClassName: longhorn
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup
+  namespace: lab-mysql
+spec:
+  accessModes: [&quot;ReadWriteOnce&quot;]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backup
+  namespace: lab-mysql
+spec:
+  containers:
+    - name: backup
+      image: mysql:8.4          # mysqldump, mysqlbinlog, mysql 클라이언트가 들어 있다
+      command: [&quot;sleep&quot;, &quot;infinity&quot;]
+      env:
+        - name: PW
+          valueFrom:
+            secretKeyRef: { name: mysql-root, key: password }
+      volumeMounts:
+        - { name: backup, mountPath: /backup }
+  volumes:
+    - name: backup
+      persistentVolumeClaim: { claimName: backup }
+</code></pre>
+<pre><code class="language-bash">kubectl create namespace lab-mysql
+kubectl create secret generic mysql-root -n lab-mysql --from-literal=password=labroot
+kubectl apply -f lab-mysql-durability.yaml
+kubectl get pod -n lab-mysql -w   # mysql-0, 1, 2와 backup이 모두 READY가 될 때까지
+</code></pre>
+<h2>헬퍼</h2>
+<pre><code class="language-bash"># 사용법: echo &quot;SQL&quot; | msql 0
+msql() {
+  kubectl exec -i -n lab-mysql &quot;mysql-$1&quot; -c mysql -- \
+    bash -c &#x27;mysql -uroot -p&quot;$MYSQL_ROOT_PASSWORD&quot; -t lab 2&gt;/dev/null&#x27;
+}
+
+mall() {
+  local sql; sql=$(cat)
+  for i in 0 1 2; do echo &quot;== mysql-$i&quot;; echo &quot;$sql&quot; | msql &quot;$i&quot;; done
+}
+
+# 값 하나만 받아오기. 사용법: mval 0 &quot;SELECT @@gtid_executed&quot;
+mval() {
+  echo &quot;$2&quot; | kubectl exec -i -n lab-mysql &quot;mysql-$1&quot; -c mysql -- \
+    bash -c &#x27;mysql -uroot -p&quot;$MYSQL_ROOT_PASSWORD&quot; -N -s lab 2&gt;/dev/null&#x27; | tr -d &#x27;\n&#x27;
+}
+</code></pre>
+<h2>복제 구성</h2>
+<pre><code class="language-bash"># 1. 세 서버 모두 GTID 집합이 비어 있는지 확인 (비어 있지 않은 replica는 RESET BINARY LOGS AND GTIDS)
+echo &quot;SELECT @@gtid_executed;&quot; | mall
+
+# 2. 복제 계정
+mall &lt;&lt;&#x27;SQL&#x27;
+SET SESSION sql_log_bin = 0;
+CREATE USER &#x27;repl&#x27;@&#x27;%&#x27; IDENTIFIED BY &#x27;replpass&#x27;;
+GRANT REPLICATION SLAVE ON *.* TO &#x27;repl&#x27;@&#x27;%&#x27;;
+SET SESSION sql_log_bin = 1;
+SQL
+
+# 3. replica 연결
+for i in 1 2; do
+msql &quot;$i&quot; &lt;&lt;&#x27;SQL&#x27;
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST = &#x27;mysql-0.mysql&#x27;, SOURCE_USER = &#x27;repl&#x27;, SOURCE_PASSWORD = &#x27;replpass&#x27;,
+  SOURCE_AUTO_POSITION = 1, GET_SOURCE_PUBLIC_KEY = 1;
+START REPLICA;
+SET PERSIST super_read_only = ON;
+SQL
+done
+
+# 4. 플러그인 확인
+echo &quot;SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME LIKE &#x27;rpl_semi%&#x27;;&quot; | mall
+
+# 5. 실험용 테이블
+echo &quot;CREATE TABLE orders (id BIGINT AUTO_INCREMENT PRIMARY KEY, memo VARCHAR(50));&quot; | msql 0
+</code></pre>
+<h2>실습 후 정리</h2>
+<pre><code class="language-bash">kubectl delete namespace lab-mysql
+</code></pre>
+<hr/>
+<h1>반동기 복제</h1>
+<h2>비동기 복제의 커밋 순서</h2>
+<p>비동기 복제에서 source는 replica를 전혀 기다리지 않는다.</p>
+<pre><code class="language-bash">[비동기]
+binlog 기록 + fsync -&gt; InnoDB 커밋 -&gt; 클라이언트에 성공 응답
+                                       (replica로의 전송은 이와 무관하게 뒤에서 진행)
+</code></pre>
+<p>클라이언트가 성공을 받은 시점에, 그 트랜잭션이 replica에 있다는 보장이 하나도 없다. 이 순간 source가 사라지면 그 트랜잭션은 새 topology에서 사라진다.</p>
+<h2>반동기 복제의 커밋 순서</h2>
+<p>반동기 복제(semi-synchronous replication)를 켜면, source는 클라이언트에 응답하기 전에 적어도 하나의 replica가 그 트랜잭션을 받아서 relay log에 기록했다는 확인(ACK)을 기다린다.</p>
+<pre><code class="language-bash">[반동기, AFTER_SYNC (기본값)]
+binlog 기록 + fsync -&gt; replica의 ACK 대기 -&gt; InnoDB 커밋 -&gt; 클라이언트에 성공 응답
+</code></pre>
+<p>반동기 복제가 보장하는 건 replica의 relay log에 도착했다는 것까지고, replica가 그걸 실행해서 데이터에 반영했다는 것까지는 아니다. 그래서 반동기 복제를 써도 replica에서 읽으면 방금 쓴 데이터가 안 보일 수 있다. 대신 failover 때는 relay log에 받아둔 트랜잭션까지 다 실행한 뒤에 승격하면 되니까, 클라이언트가 성공을 받은 트랜잭션은 사라지지 않는다.</p>
+<h2>AFTER_SYNC와 AFTER_COMMIT</h2>
+<p>ACK를 기다리는 시점은 두 가지가 있다.</p>
+<table><thead><tr><th>wait_point</th><th>순서</th><th>failover 시</th></tr></thead><tbody><tr><td><code>AFTER_SYNC</code> (기본값)</td><td>binlog fsync → ACK 대기 → InnoDB 커밋 → 응답</td><td>ACK를 받기 전에는 source에서도 커밋 전이라 다른 세션에 안 보인다. 다른 세션이 본 데이터는 모두 replica에 있다</td></tr><tr><td><code>AFTER_COMMIT</code></td><td>binlog fsync → InnoDB 커밋 → ACK 대기 → 응답</td><td>ACK를 기다리는 동안 이미 커밋된 상태라 다른 세션이 그 데이터를 읽을 수 있다. 그 사이 source가 죽으면, 다른 세션이 읽었던 데이터가 새 source에는 없다</td></tr></tbody></table>
+<p><code>AFTER_COMMIT</code>에서는 사용자 A의 주문을 사용자 B가 조회 화면에서 이미 봤는데, failover 후에 그 주문이 사라지는 일이 생길 수 있다. 그래서 기본값인 <code>AFTER_SYNC</code>를 쓰는 게 맞다.</p>
+<h2>반동기 복제가 남기는 함정 하나</h2>
+<p><code>AFTER_SYNC</code>에서 source가 ACK를 기다리는 도중에 죽으면, 그 트랜잭션은 source의 binlog에는 기록됐는데 클라이언트는 성공을 받지 못한 상태다. 이 트랜잭션이 replica에 도착했을 수도 있고 아닐 수도 있다.</p>
+<ul>
+<li>replica에 도착했다면 새 source에 그 데이터가 있다.
+<ul>
+<li>클라이언트는 실패로 알고 재시도할 수 있으니, 애플리케이션 쪽 멱등성이 필요하다.</li>
+</ul>
+</li>
+<li>도착하지 않았다면 옛 source에만 그 GTID가 남는다.
+<ul>
+<li>옛 source가 크래시 복구로 다시 살아나면 그 트랜잭션은 binlog에 있으니 커밋된다. 그러면 옛 source에는 새 topology에 없는 GTID가 생긴다. 그래서 옛 source를 그대로 replica로 붙이지 말고, 새 source의 데이터로 다시 만들어야 한다.</li>
+</ul>
+</li>
+</ul>
+<h2>비동기에서는 커밋 성공이 유실된다</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>비동기 복제에서 replica가 받지 못하는 상태여도 source의 커밋은 즉시 성공한다. 이 트랜잭션은 replica에 없다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash"># 두 replica의 수신을 멈춰서 source와 끊어진 상태를 흉내낸다
+for i in 1 2; do echo &quot;STOP REPLICA IO_THREAD;&quot; | msql &quot;$i&quot;; done
+
+time (echo &quot;INSERT INTO orders (memo) VALUES (&#x27;async-write&#x27;);&quot; | msql 0)
+
+G0=$(mval 0 &quot;SELECT @@gtid_executed&quot;)
+G1=$(mval 1 &quot;SELECT @@gtid_executed&quot;)
+echo &quot;SELECT GTID_SUBTRACT(&#x27;$G0&#x27;, &#x27;$G1&#x27;) AS only_source;&quot; | msql 0
+
+for i in 1 2; do echo &quot;START REPLICA IO_THREAD;&quot; | msql &quot;$i&quot;; done
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>INSERT 소요 시간</td><td>즉시</td><td></td></tr><tr><td><code>only_source</code></td><td><code>async-write</code>의 GTID 1건</td><td></td></tr></tbody></table>
+<p>이 순간 source가 사라졌다면, 클라이언트가 성공을 받은 <code>async-write</code>는 어떤 replica에도 없다.</p>
+<h2>반동기 복제 켜기</h2>
+<p>source와 replica 양쪽에서 켜야 하고, replica 쪽은 수신 스레드를 재시작해야 반동기로 다시 연결된다.</p>
+<pre><code class="language-bash"># source
+echo &quot;SET PERSIST rpl_semi_sync_source_enabled = ON;&quot; | msql 0
+
+# replica
+for i in 1 2; do
+  echo &quot;SET PERSIST rpl_semi_sync_replica_enabled = ON;
+        STOP REPLICA IO_THREAD; START REPLICA IO_THREAD;&quot; | msql &quot;$i&quot;
+done
+
+echo &quot;SHOW STATUS LIKE &#x27;Rpl_semi_sync_source_status&#x27;;
+      SHOW STATUS LIKE &#x27;Rpl_semi_sync_source_clients&#x27;;
+      SHOW VARIABLES LIKE &#x27;rpl_semi_sync_source_%&#x27;;&quot; | msql 0
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td><code>Rpl_semi_sync_source_status</code></td><td>ON</td><td></td></tr><tr><td><code>Rpl_semi_sync_source_clients</code></td><td>2</td><td></td></tr><tr><td><code>rpl_semi_sync_source_wait_point</code></td><td>AFTER_SYNC</td><td></td></tr><tr><td><code>rpl_semi_sync_source_timeout</code></td><td>10000 (ms)</td><td></td></tr><tr><td><code>rpl_semi_sync_source_wait_for_replica_count</code></td><td>1</td><td></td></tr></tbody></table>
+<p>실제 운영에서 failover 후 새 source가 바로 반동기로 동작하려면, 새 source가 될 replica에도 <code>rpl_semi_sync_source_enabled</code>가 미리 켜져 있어야 한다. source로 동작하지 않는 동안에는 이 설정이 아무 영향이 없으니, 세 서버 모두에 두 설정을 다 켜두는 게 일반적이다.</p>
+<h2>반동기에서는 ACK가 없으면 응답을 미룬다</h2>
+<ul>
+<li>가설
+<ul>
+<li>replica가 하나도 받지 못하는 상태면 source는 <code>rpl_semi_sync_source_timeout</code>(10초) 동안 응답하지 않고 기다린다. 시간이 지나면 비동기로 떨어지고(fallback) 커밋 응답을 보낸다.</li>
+</ul>
+</li>
+</ul>
+<p>replica가 하나도 연결돼 있지 않은데도 10초를 기다리는 건 <code>rpl_semi_sync_source_wait_no_replica</code>(기본값 ON) 때문이다. ON이면 기다리는 동안 replica 수가 필요한 수보다 줄어들어도 timeout까지 계속 기다리고, OFF면 replica 수가 부족해지는 즉시 비동기로 떨어진다.</p>
+<ul>
+<li>절차</li>
+</ul>
+<pre><code class="language-bash">echo &quot;SHOW STATUS LIKE &#x27;Rpl_semi_sync_source_%tx&#x27;;&quot; | msql 0     # yes_tx, no_tx 기록
+
+for i in 1 2; do echo &quot;STOP REPLICA IO_THREAD;&quot; | msql &quot;$i&quot;; done
+
+time (echo &quot;INSERT INTO orders (memo) VALUES (&#x27;semisync-timeout&#x27;);&quot; | msql 0)
+
+echo &quot;SHOW STATUS LIKE &#x27;Rpl_semi_sync_source_status&#x27;;
+      SHOW STATUS LIKE &#x27;Rpl_semi_sync_source_%tx&#x27;;&quot; | msql 0
+
+# 이 상태(비동기로 떨어진 상태)에서 한 건 더
+time (echo &quot;INSERT INTO orders (memo) VALUES (&#x27;after-fallback&#x27;);&quot; | msql 0)
+
+# replica를 다시 연결하면 반동기로 돌아온다
+for i in 1 2; do echo &quot;START REPLICA IO_THREAD;&quot; | msql &quot;$i&quot;; done
+sleep 3
+echo &quot;SHOW STATUS LIKE &#x27;Rpl_semi_sync_source_status&#x27;;&quot; | msql 0
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td><code>semisync-timeout</code> INSERT 소요 시간</td><td>약 10초</td><td></td></tr><tr><td>그 직후 <code>Rpl_semi_sync_source_status</code></td><td>OFF (비동기로 떨어짐)</td><td></td></tr><tr><td><code>Rpl_semi_sync_source_no_tx</code> 증가</td><td>+1 이상</td><td></td></tr><tr><td><code>after-fallback</code> INSERT 소요 시간</td><td>즉시</td><td></td></tr><tr><td>replica 재연결 후 status</td><td>ON</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>반동기가 비동기로 떨어진 순간부터는, 실험 1과 똑같이 커밋 성공이 유실될 수 있는 상태다. 그리고 이 전환은 조용히 일어난다. 에러가 나지 않고 그저 커밋이 정상적으로 빨라질 뿐이다. 그래서 <code>Rpl_semi_sync_source_status</code>가 OFF로 바뀌는 걸 반드시 알림으로 감시해야 한다. 이걸 놓치면 반동기 복제를 켜놓고도 실제로는 비동기로 운영하게 된다.</li>
+</ul>
+</li>
+</ul>
+<h2>timeout은 가용성과 유실 사이의 선택이다</h2>
+<table><thead><tr><th>timeout 설정</th><th>replica 장애 시 동작</th><th>대가</th></tr></thead><tbody><tr><td>짧게 (기본 10초)</td><td>10초 기다린 뒤 비동기로 떨어지고 쓰기 계속</td><td>그 이후 failover가 나면 유실 가능</td></tr><tr><td>아주 길게</td><td>replica가 돌아올 때까지 쓰기가 멈춤</td><td>유실은 없지만 replica 장애가 곧 쓰기 장애</td></tr></tbody></table>
+<p>어느 쪽이 맞는지는 서비스가 결정한다. 정산이나 결제처럼 유실이 가용성보다 치명적이라면 timeout을 크게 잡고, replica를 충분히 둬서 replica 하나의 장애로는 ACK가 끊기지 않게 만드는 게 맞다. replica가 두 대 이상이고 <code>wait_for_replica_count = 1</code>이면, 한 대가 죽어도 나머지 한 대의 ACK로 계속 반동기를 유지한다.</p>
+<h2>반동기의 비용 측정</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>반동기 복제는 커밋마다 replica와의 네트워크 왕복을 기다리기 때문에 커밋 지연이 늘어난다. <code>wait_for_replica_count</code>를 2로 올리면 더 느린 replica를 기다려야 해서 더 늘어난다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+<ul>
+<li>커넥션 하나로 2000건을 한 건씩 커밋하면서 시간을 잰다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-bash">run_commit_test() {
+  echo &quot;TRUNCATE TABLE orders;&quot; | msql 0
+  kubectl exec -n lab-mysql backup -- bash -c &#x27;
+    time (seq 1 2000 \
+      | sed &quot;s/.*/INSERT INTO orders (memo) VALUES (\&quot;c-&amp;\&quot;);/&quot; \
+      | mysql -h mysql-0.mysql -uroot -p&quot;$PW&quot; lab 2&gt;/dev/null)&#x27;
+}
+
+echo &quot;SET GLOBAL rpl_semi_sync_source_enabled = OFF;&quot; | msql 0
+run_commit_test
+
+echo &quot;SET GLOBAL rpl_semi_sync_source_enabled = ON;
+      SET GLOBAL rpl_semi_sync_source_wait_for_replica_count = 1;&quot; | msql 0
+run_commit_test
+
+echo &quot;SET GLOBAL rpl_semi_sync_source_wait_for_replica_count = 2;&quot; | msql 0
+run_commit_test
+
+echo &quot;SET GLOBAL rpl_semi_sync_source_wait_for_replica_count = 1;&quot; | msql 0
+</code></pre>
+<table><thead><tr><th>모드</th><th>예상</th><th>소요 시간</th><th>초당 커밋</th></tr></thead><tbody><tr><td>비동기</td><td>가장 빠름</td><td></td><td></td></tr><tr><td>반동기, replica 1대 ACK</td><td>네트워크 왕복만큼 느림</td><td></td><td></td></tr><tr><td>반동기, replica 2대 ACK</td><td>더 느린 replica에 맞춰짐</td><td></td><td></td></tr></tbody></table>
+<p>이 비용은 커밋 하나하나의 지연이지 처리량 전체가 그만큼 줄어드는 건 아니다. 동시에 여러 세션이 커밋하면, source가 여러 트랜잭션을 한 번에 binlog에 쓰고 ACK도 묶어서 받기 때문에, 동시성이 높을수록 이 비용이 나뉘어서 작아진다. 실제 영향은 서비스의 동시성 수준으로 다시 재봐야 한다.</p>
+<hr/>
+<h1>crash-safe replica</h1>
+<p>replica가 적용 도중에 크래시하면, 재시작 후에 어디서부터 다시 받고 다시 실행할지를 정확히 알아야 한다. 이게 어긋나면 트랜잭션을 두 번 실행하거나(중복 키 에러로 복제가 멈추거나, 멈추지 않고 데이터가 어긋나거나) 하나를 건너뛴다.</p>
+<p>MySQL 8.4 공식 문서가 크래시에 가장 강한 replica 설정으로 제시하는 조합은 이렇다.</p>
+<ul>
+<li>적용 위치를 테이블에 기록 (기본값)
+<ul>
+<li>적용 스레드가 어디까지 실행했는지를 <code>mysql.slave_relay_log_info</code>라는 InnoDB 테이블에 저장하고, 이 기록을 트랜잭션 적용과 함께 커밋한다. 그래서 데이터와 적용 위치가 항상 같이 커밋되거나 같이 롤백된다. 예전의 파일 저장 방식(<code>relay_log_info_repository = FILE</code>)은 크래시 후 복구를 보장하지 않고 deprecated됐다. 이 변수 자체도 deprecated라서 설정하지 않고 기본값(TABLE)을 쓰면 된다.</li>
+</ul>
+</li>
+<li><code>gtid_mode = ON</code> + <code>SOURCE_AUTO_POSITION = 1</code>
+<ul>
+<li>replica가 다시 연결할 때 자기가 실행한 GTID 집합을 보내고, source는 빠진 것만 보낸다. 실행한 GTID는 데이터와 함께 커밋되기 때문에, 재시작 후에도 이미 실행한 트랜잭션을 다시 받지 않는다.</li>
+</ul>
+</li>
+<li><code>relay_log_recovery = ON</code>
+<ul>
+<li>서버가 시작할 때 새 relay log 파일을 만들고, 수신 스레드가 적용 스레드가 실제로 실행한 위치부터 다시 받게 한다. 크래시로 relay log 끝부분이 손상돼 있어도 그걸 처리하지 않는다. 기본값은 OFF이고 실행 중에는 바꿀 수 없어서, 설정 파일에 넣어두고 시작해야 한다.</li>
+</ul>
+</li>
+<li><code>innodb_flush_log_at_trx_commit = 1</code> (기본값)
+<ul>
+<li>적용한 트랜잭션과 적용 위치 기록이 커밋마다 디스크에 닿는다.</li>
+</ul>
+</li>
+</ul>
+<p>공식 문서는 여기에 두 가지를 더 제시한다. 복제 연결에 <code>GTID_ONLY = 1</code>을 주면 replica가 binlog와 relay log의 파일명과 위치를 아예 저장하지 않고 GTID만으로 복구한다. <code>sync_relay_log = 1</code>은 relay log를 이벤트마다 디스크에 동기화하는 가장 안전한 설정이지만, 디스크 쓰기가 많아서 가장 느리다고 문서에 명시돼 있다. 이 실험은 위 네 가지만으로 진행하고, 더 강한 보장이 필요하면 이 둘을 추가로 검토하면 된다.</p>
+<h2>적용 도중 replica를 강제로 죽이기</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>위 설정이 켜져 있으면, 대량 적용 도중 replica를 <code>kill -9</code>로 죽여도 재시작 후 자동으로 이어서 적용하고, 최종 데이터는 source와 같다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash">echo &quot;SHOW VARIABLES LIKE &#x27;relay_log_recovery&#x27;;&quot; | msql 2
+
+# source에 작은 트랜잭션 5000건을 백그라운드로 흘린다
+kubectl exec -n lab-mysql backup -- bash -c &#x27;
+  seq 1 5000 | sed &quot;s/.*/INSERT INTO orders (memo) VALUES (\&quot;crash-&amp;\&quot;);/&quot; \
+    | mysql -h mysql-0.mysql -uroot -p&quot;$PW&quot; lab 2&gt;/dev/null&#x27; &amp;
+
+# 적용이 진행 중일 때 mysql-2의 mysqld를 강제로 죽인다
+sleep 3
+kubectl exec -n lab-mysql mysql-2 -c mysql -- bash -c &#x27;kill -9 $(cat /var/run/mysqld/mysqld.pid)&#x27;
+wait
+
+# 컨테이너 재시작과 크래시 복구를 기다린다
+sleep 5
+kubectl wait -n lab-mysql --for=condition=Ready pod/mysql-2 --timeout=180s
+kubectl get pod -n lab-mysql mysql-2   # RESTARTS가 1 올라가 있다
+
+echo &quot;SHOW REPLICA STATUS\G&quot; | msql 2 | grep -E &quot;Running:|Last_.*Error:&quot;
+</code></pre>
+<p>복제는 서버가 재시작되면 자동으로 다시 시작된다. 적용이 다 따라잡을 때까지 기다린 뒤 비교한다.</p>
+<pre><code class="language-bash">G0=$(mval 0 &quot;SELECT @@gtid_executed&quot;)
+echo &quot;SELECT WAIT_FOR_EXECUTED_GTID_SET(&#x27;$G0&#x27;, 60) AS result;&quot; | msql 2
+echo &quot;SELECT COUNT(*) FROM orders; CHECKSUM TABLE orders;&quot; | mall
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>재시작 후 <code>Replica_IO_Running</code> / <code>Replica_SQL_Running</code></td><td>Yes / Yes</td><td></td></tr><tr><td>복제 에러</td><td>없음</td><td></td></tr><tr><td>세 서버의 <code>orders</code> 행 수</td><td>같음</td><td></td></tr><tr><td>세 서버의 체크섬</td><td>같음</td><td></td></tr></tbody></table>
+<p>에러 로그에서 복구 과정을 볼 수 있다.</p>
+<pre><code class="language-bash">kubectl logs -n lab-mysql mysql-2 -c mysql | grep -iE &quot;relay log recovery|recovery&quot;
+</code></pre>
+<hr/>
+<h1>복제는 실수를 막아주지 않는다</h1>
+<p>복제는 source의 모든 변경을 replica로 그대로 옮긴다. 누군가 운영 DB에서 실수로 <code>DROP TABLE</code>을 실행하면, 그 DROP도 1초도 안 돼서 모든 replica에 퍼진다. 이 경우 복구할 수 있는 길은 실수 이전 시점의 백업과 그 이후의 binlog뿐이다. 이걸로 실수 직전 시점까지 데이터를 되살리는 걸 시점 복구(PITR, Point-In-Time Recovery)라고 한다.</p>
+<pre><code class="language-bash">[백업 시점]-----(binlog로 재생)-----[실수 직전]  X [실수: DROP]
+     ㅣ                                  ㅣ
+  백업 복원                      여기까지만 재생하고 멈춘다
+</code></pre>
+<p>PITR에 필요한 건 두 가지다.</p>
+<ul>
+<li>주기적인 백업
+<ul>
+<li>복구의 출발점이다.</li>
+</ul>
+</li>
+<li>백업 이후의 모든 binlog
+<ul>
+<li>백업 시점부터 실수 직전까지를 재생한다. binlog는 source가 죽으면 같이 사라질 수 있기 때문에, source와 다른 곳에 실시간으로 복사해둬야 한다.</li>
+</ul>
+</li>
+</ul>
+<h2>백업 방식 비교</h2>
+<table><thead><tr><th>방식</th><th>도구</th><th>특징</th></tr></thead><tbody><tr><td>논리 백업</td><td><code>mysqldump</code>, MySQL Shell의 덤프 유틸리티</td><td>SQL로 내보낸다. 버전 간 이동이 자유롭고 일부 테이블만 복원하기 쉽지만, 데이터가 크면 백업도 복원도 느리다</td></tr><tr><td>물리 백업</td><td>Percona XtraBackup</td><td>데이터 파일을 그대로 복사한다. 운영 중에도 서비스를 멈추지 않고 백업하고, 큰 데이터에서 복원이 훨씬 빠르다. MySQL 버전과 맞는 XtraBackup 버전을 써야 한다</td></tr><tr><td>스냅샷</td><td>스토리지 스냅샷 (Longhorn 등)</td><td>볼륨을 통째로 찍는다. 빠르지만, MySQL이 일관된 상태일 때 찍어야 하고 다른 스토리지로 옮기기 어렵다</td></tr></tbody></table>
+<p>데이터가 수십 GB를 넘는 운영 환경이라면 XtraBackup으로 물리 백업을 하는 게 맞다. 복원 시간이 장애 시간이기 때문이다. 이 실험은 데이터가 작고 백업 파일의 내용을 직접 읽어볼 수 있는 <code>mysqldump</code>로 진행한다. 백업과 binlog 재생으로 시점을 맞추는 원리는 어느 방식이든 같다.</p>
+<h2>실수로 지운 테이블을 시점 복구로 되살리기</h2>
+<ul>
+<li>가설
+<ul>
+<li>백업과, 백업 이후 별도 저장소에 복사해둔 binlog가 있으면, DROP 트랜잭션 하나만 빼고 재생해서 실수 직전 상태로 복구할 수 있다.</li>
+</ul>
+</li>
+</ul>
+<h3>binlog를 다른 곳에 실시간으로 복사해둔다.</h3>
+<p><code>mysqlbinlog</code>는 원격 서버에 replica처럼 접속해서 binlog를 그대로 받아올 수 있다. <code>--stop-never</code>를 주면 끊기지 않고 계속 따라간다.</p>
+<pre><code class="language-bash">echo &quot;SHOW BINARY LOGS;&quot; | msql 0   # 가장 오래된 binlog 파일명 확인
+
+kubectl exec -n lab-mysql backup -- bash -c &#x27;
+  mkdir -p /backup/binlog &amp;&amp; cd /backup/binlog
+  nohup mysqlbinlog --read-from-remote-server --host=mysql-0.mysql \
+    --user=root --password=&quot;$PW&quot; --get-server-public-key \
+    --raw --stop-never --connection-server-id=900 \
+    binlog.000001 &gt; /backup/binlog-stream.log 2&gt;&amp;1 &amp;&#x27;
+</code></pre>
+<p><code>binlog.000001</code>은 위에서 확인한 가장 오래된 파일명으로 바꾼다. <code>--connection-server-id</code>는 이 스트리머가 source에 접속할 때 쓰는 server_id다. 복제에 참여하는 다른 서버와 겹치면 안 된다.</p>
+<pre><code class="language-bash">kubectl exec -n lab-mysql backup -- ls -la /backup/binlog   # source의 binlog 파일들이 보여야 한다
+</code></pre>
+<p>이 스트리머는 지금 source인 mysql-0에 붙어 있다. failover로 source가 바뀌면 새 source에 다시 붙여야 한다. GTID 환경에서는 새 source의 binlog에도 같은 GTID로 트랜잭션이 기록되기 때문에, 새 source에서 이어 받으면 된다. 실제 운영에서는 이 스트리머를 failover 절차의 일부로 넣어두거나, 스트리머가 접속이 끊기면 현재 source를 찾아 다시 붙는 스크립트로 감싼다.</p>
+<h3>백업</h3>
+<pre><code class="language-bash">echo &quot;TRUNCATE TABLE orders;
+      INSERT INTO orders (memo) VALUES (&#x27;before-backup-1&#x27;), (&#x27;before-backup-2&#x27;);&quot; | msql 0
+
+kubectl exec -n lab-mysql backup -- bash -c &#x27;
+  mysqldump -h mysql-0.mysql -uroot -p&quot;$PW&quot; \
+    --single-transaction --source-data=2 --set-gtid-purged=ON \
+    --routines --triggers --events --databases lab \
+    &gt; /backup/full.sql 2&gt;/dev/null
+  grep -E &quot;GTID_PURGED|CHANGE REPLICATION SOURCE&quot; /backup/full.sql | head&#x27;
+</code></pre>
+<ul>
+<li><code>--single-transaction</code>
+<ul>
+<li>하나의 일관된 스냅샷으로 덤프해서, 백업하는 동안 쓰기를 막지 않는다.</li>
+</ul>
+</li>
+<li><code>--source-data=2</code>
+<ul>
+<li>백업 시점의 binlog 좌표를 주석으로 남긴다.</li>
+</ul>
+</li>
+<li><code>--set-gtid-purged=ON</code>
+<ul>
+<li>백업 시점의 GTID 집합을 <code>SET @@GLOBAL.GTID_PURGED</code> 문장으로 남긴다. 복원한 서버가 이 백업이 어느 GTID까지 포함하는지 알게 해주고, binlog 재생 시 이미 포함된 트랜잭션을 건너뛰게 해준다</li>
+</ul>
+</li>
+</ul>
+<h3>백업 이후의 정상 작업과 실수</h3>
+<pre><code class="language-bash">echo &quot;INSERT INTO orders (memo) VALUES (&#x27;after-backup-1&#x27;);
+      INSERT INTO orders (memo) VALUES (&#x27;after-backup-2&#x27;);&quot; | msql 0
+
+date +%T
+echo &quot;DROP TABLE orders;&quot; | msql 0       # 실수
+
+echo &quot;CREATE TABLE audit (id INT PRIMARY KEY);
+      INSERT INTO audit VALUES (1);&quot; | msql 0   # 실수 이후에도 다른 쓰기는 계속된다
+
+echo &quot;SHOW TABLES;&quot; | mall               # 모든 서버에서 orders가 사라졌다
+</code></pre>
+<h3>실수한 트랜잭션의 GTID 찾기</h3>
+<pre><code class="language-bash">kubectl exec -n lab-mysql backup -- bash -c &#x27;
+  cd /backup/binlog
+  mysqlbinlog --base64-output=DECODE-ROWS -v binlog.* 2&gt;/dev/null \
+    | grep -B 20 &quot;DROP TABLE&quot; | grep -E &quot;GTID_NEXT|DROP TABLE&quot;&#x27;
+</code></pre>
+<p>출력에서 <code>DROP TABLE</code> 바로 앞의 <code>SET @@SESSION.GTID_NEXT= &#x27;&lt;uuid&gt;:&lt;N&gt;&#x27;</code>가 지워야 할 트랜잭션의 GTID다.</p>
+<h3>복구용 서버를 따로 띄워서 복원한다.</h3>
+<p>운영 서버에 바로 복원하지 않는다. 복구 결과를 먼저 확인하고, 운영에 반영하는 방법(필요한 테이블만 옮기기, 서버 교체 등)은 그다음에 정한다.</p>
+<p><code>kubectl run</code>의 <code>--</code> 뒤에 주는 인자는 이미지의 기본 명령을 대체한다. 공식 MySQL 이미지의 엔트리포인트는 인자가 <code>-</code>로 시작하면 앞에 <code>mysqld</code>를 붙여서 실행하기 때문에, 서버 옵션만 넘기면 된다.</p>
+<pre><code class="language-bash">kubectl run mysql-restore -n lab-mysql --image=mysql:8.4 \
+  --env=MYSQL_ROOT_PASSWORD=labroot \
+  -- --gtid-mode=ON --enforce-gtid-consistency=ON --server-id=999
+
+# 이 팟에는 레디니스 프로브가 없어서 Ready가 곧 초기화 완료를 뜻하지 않는다.
+# 초기화 중에는 네트워크를 막은 임시 서버로 뜨기 때문에, TCP로 ping이 되면 초기화가 끝난 것이다
+kubectl wait -n lab-mysql --for=condition=Ready pod/mysql-restore --timeout=180s
+RESTORE_IP=$(kubectl get pod -n lab-mysql mysql-restore -o jsonpath=&#x27;{.status.podIP}&#x27;)
+kubectl exec -n lab-mysql backup -- bash -c &quot;
+  until mysqladmin ping -h $RESTORE_IP -uroot -p\&quot;\$PW\&quot; --silent 2&gt;/dev/null; do sleep 3; done
+  echo ready&quot;
+</code></pre>
+<p><code>kubectl run</code>으로 만든 팟는 Service가 없어서 이름으로 접근할 수 없으니, 팟 IP로 접속하는 헬퍼를 만든다. 복원 전에는 <code>lab</code> 데이터베이스가 없으니 기본 데이터베이스는 지정하지 않는다.</p>
+<pre><code class="language-bash">rsql() {
+  kubectl exec -i -n lab-mysql backup -- \
+    bash -c &quot;mysql -h $RESTORE_IP -uroot -p\&quot;\$PW\&quot; -t 2&gt;/dev/null&quot;
+}
+</code></pre>
+<p>백업을 복원하기 전에 복구 서버의 GTID 집합이 비어 있는지 확인한다. 백업 파일의 <code>GTID_PURGED</code> 설정은 서버에 이미 있는 GTID와 겹치면 실패하기 때문이다. 초기화 과정에서 GTID가 생겼다면, 이 서버는 막 만든 복구 전용 서버라서 초기화해도 안전하다.</p>
+<pre><code class="language-bash">echo &quot;SELECT @@gtid_executed;&quot; | rsql
+# 비어 있지 않다면
+# echo &quot;RESET BINARY LOGS AND GTIDS;&quot; | rsql
+
+kubectl exec -n lab-mysql backup -- bash -c &quot;
+  mysql -h $RESTORE_IP -uroot -p\&quot;\$PW\&quot; &lt; /backup/full.sql 2&gt;/dev/null&quot;
+
+echo &quot;SELECT * FROM lab.orders; SELECT @@gtid_executed;&quot; | rsql
+</code></pre>
+<p>여기까지는 백업 시점의 데이터다(<code>before-backup</code> 두 건). <code>gtid_executed</code>는 백업 파일에 기록된 GTID 집합과 같아야 한다.</p>
+<h3>binlog를 DROP만 빼고 재생한다.</h3>
+<pre><code class="language-bash">DROP_GTID=&quot;&lt;4단계에서 찾은 GTID&gt;&quot;
+
+kubectl exec -n lab-mysql backup -- bash -c &quot;
+  cd /backup/binlog
+  mysqlbinlog --exclude-gtids=&#x27;$DROP_GTID&#x27; binlog.* 2&gt;/dev/null \
+    | mysql -h $RESTORE_IP -uroot -p\&quot;\$PW\&quot; 2&gt;&amp;1 | grep -v Warning&quot;
+
+echo &quot;SELECT * FROM lab.orders; SHOW TABLES FROM lab; SELECT * FROM lab.audit;&quot; | rsql
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>백업 복원 직후 <code>orders</code></td><td>before-backup 2건</td><td></td></tr><tr><td>재생 후 <code>orders</code></td><td>before-backup 2건 + after-backup 2건</td><td></td></tr><tr><td>재생 후 <code>audit</code> 테이블</td><td>있음 (실수 이후의 정상 작업도 살아남음)</td><td></td></tr></tbody></table>
+<p>관찰 포인트: binlog 파일 전체를 처음부터 재생했는데, 백업에 이미 포함된 트랜잭션은 중복으로 실행되지 않았다. 복원한 백업이 <code>GTID_PURGED</code>로 자기가 어디까지 포함하는지를 알려줬고, binlog의 각 트랜잭션에는 GTID가 붙어 있어서 이미 실행된 GTID는 서버가 자동으로 건너뛰기 때문이다. GTID가 없었다면 백업 시점의 binlog 좌표를 찾아서 정확히 거기서부터 재생해야 하고, DROP의 위치도 바이트 위치로 계산해서 그 앞뒤를 나눠 재생해야 한다.</p>
+<p>DROP 이후의 쓰기까지 살리지 않고 실수 직전 시점까지만 돌리고 싶다면, <code>--exclude-gtids</code> 대신 실수 시각으로 <code>--stop-datetime</code>을 쓰거나, 실수 이후 GTID 전체를 제외하면 된다.</p>
+<h3>운영에 반영하기</h3>
+<p>복구한 데이터를 운영에 반영하는 방법은 상황에 따라 다르다.</p>
+<ul>
+<li>실수로 지운 테이블 하나만 되살리기
+<ul>
+<li>복구 서버에서 그 테이블만 덤프해서 운영 source에 넣는다. 일반 쓰기라서 replica로 자연스럽게 퍼진다.</li>
+</ul>
+</li>
+<li>서버 전체를 되돌려야 하는 경우
+<ul>
+<li>복구 서버를 새 source로 삼고 나머지를 그 밑에 다시 붙이거나 새로 만든다. 그 사이의 쓰기를 어떻게 할지 결정해야 해서 훨씬 큰 작업이다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-bash">kubectl exec -n lab-mysql backup -- bash -c &quot;
+  mysqldump -h $RESTORE_IP -uroot -p\&quot;\$PW\&quot; --set-gtid-purged=OFF lab orders 2&gt;/dev/null \
+    | mysql -h mysql-0.mysql -uroot -p\&quot;\$PW\&quot; lab 2&gt;/dev/null&quot;
+
+echo &quot;SELECT COUNT(*) FROM orders;&quot; | mall
+</code></pre>
+<p><code>--set-gtid-purged=OFF</code>를 준 이유는, 이 덤프를 운영 source에서 평범한 새 트랜잭션으로 실행하기 위해서다. 그래야 새 GTID를 받아서 replica로 퍼진다.</p>
+<h2>백업은 복원해봐야 백업이다.</h2>
+<p>이 실험에서 가장 시간이 걸린 건 백업이 아니라 복원이었다. 복원 절차를 한 번도 실제로 해보지 않았다면, 장애가 났을 때 처음으로 해보게 된다. 그래서 운영에서는 백업을 정기적으로 복구 서버에 복원해보고, 행 수나 체크섬으로 검증하는 작업을 자동화해둔다. 쿠버네티스라면 이 실험의 5~6단계를 CronJob으로 만들어서 매일 돌리는 식이다.</p>
+<hr/>
+<h1>정리</h1>
+<table><thead><tr><th>대책</th><th>막는 것</th><th>대가</th></tr></thead><tbody><tr><td><code>sync_binlog = 1</code>, <code>innodb_flush_log_at_trx_commit = 1</code></td><td>source 크래시로 인한 커밋 유실</td><td>커밋마다 fsync</td></tr><tr><td>반동기 복제 (<code>AFTER_SYNC</code>)</td><td>failover로 인한 커밋 유실</td><td>커밋마다 replica 왕복 대기, timeout 시 조용히 비동기로 떨어짐</td></tr><tr><td><code>relay_log_recovery = ON</code> + GTID 자동 위치 지정</td><td>replica 크래시로 인한 중복/누락 적용</td><td>재시작 시 relay log를 다시 받음</td></tr><tr><td>백업 + binlog 스트리밍 + PITR</td><td>사람의 실수</td><td>별도 저장소, 복원 절차를 정기적으로 검증하는 운영 비용</td></tr></tbody></table>
+<ul>
+<li>비동기 복제에서는 클라이언트가 성공을 받은 트랜잭션도 failover로 사라질 수 있다.</li>
+<li>반동기 복제는 적어도 하나의 replica가 받았는지 확인하고 응답한다. 실행까지 보장하는 건 아니라서, replica에서 읽으면 여전히 지연이 보일 수 있다.</li>
+<li><code>AFTER_SYNC</code>(기본값)는 다른 세션이 본 데이터가 failover로 사라지는 걸 막는다.</li>
+<li>반동기는 timeout이 지나면 에러 없이 비동기로 떨어진다. <code>Rpl_semi_sync_source_status</code>를 반드시 감시해야 한다.</li>
+<li>replica가 죽었다 살아나도 어긋나지 않으려면 <code>relay_log_recovery = ON</code>을 켠다.</li>
+<li>복제는 실수까지 복제한다. 실수에 대한 유일한 대책은 백업과 백업 이후의 binlog고, binlog는 source와 다른 곳에 실시간으로 복사해둬야 한다.</li>
+<li>GTID 환경의 시점 복구는 binlog 전체를 재생하면서 실수한 트랜잭션 하나만 <code>--exclude-gtids</code>로 빼면 된다.</li>
+<li>백업은 복원해봐야 백업이다.</li>
+</ul>
+<p>반동기 복제를 켜고 나서 안심했다가, replica의 수신을 끊자 10초 만에 아무 에러 없이 비동기로 돌아가는 걸 보고 생각이 바뀌었다. 유실을 막는 장치들은 각자 막는 범위가 정확히 정해져 있고, 그 범위를 벗어나는 순간 조용히 동작을 멈춘다. 그래서 설정을 켜는 것만큼, 그 설정이 지금도 동작하고 있는지를 감시하는 게 중요한 것 같다.</p>
+<h1>참고</h1>
+<ul>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/replication-semisync.html">MySQL 8.4 Reference Manual, Semisynchronous Replication</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/replication-semisync-interface.html">MySQL 8.4 Reference Manual, Configuring Semisynchronous Replication</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/replication-solutions-unexpected-replica-halt.html">MySQL 8.4 Reference Manual, Making Replication Resilient to Unexpected Halts</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/point-in-time-recovery.html">MySQL 8.4 Reference Manual, Point-in-Time (Incremental) Recovery</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/mysqlbinlog.html">MySQL 8.4 Reference Manual, mysqlbinlog</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/mysqldump.html">MySQL 8.4 Reference Manual, mysqldump</a></li>
+<li><a href="https://docs.percona.com/percona-xtrabackup/8.4/">Percona XtraBackup 8.4 Documentation</a></li>
+</ul></article></div></div>
+  </body>
+</html>
