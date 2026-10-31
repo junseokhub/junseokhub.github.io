@@ -1,0 +1,821 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>애플리케이션에서 복제 활용하기 (읽기/쓰기 분리, 복제 지연, 인과적 읽기) | Record, Then Build</title>
+    <meta name="description" content="Intro replica를 두 대 붙여놨는데 애플리케이션은 여전히 source에만 접속하고 있다면, replica는 장애에 대비한 예비 서버일 뿐이다. 읽기 요청이 대부분인 서비스라면 그 읽기를 replica로 보내서 source의 " />
+    <meta property="og:title" content="애플리케이션에서 복제 활용하기 (읽기/쓰기 분리, 복제 지연, 인과적 읽기) | Record, Then Build" />
+    <meta property="og:description" content="Intro replica를 두 대 붙여놨는데 애플리케이션은 여전히 source에만 접속하고 있다면, replica는 장애에 대비한 예비 서버일 뿐이다. 읽기 요청이 대부분인 서비스라면 그 읽기를 replica로 보내서 source의 " />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EC%95%A0%ED%94%8C%EB%A6%AC%EC%BC%80%EC%9D%B4%EC%85%98%EC%97%90%EC%84%9C-%EB%B3%B5%EC%A0%9C-%ED%99%9C%EC%9A%A9%ED%95%98%EA%B8%B0-%EC%9D%BD%EA%B8%B0%EC%93%B0%EA%B8%B0-%EB%B6%84%EB%A6%AC-%EB%B3%B5%EC%A0%9C-%EC%A7%80%EC%97%B0-%EC%9D%B8%EA%B3%BC%EC%A0%81-%EC%9D%BD%EA%B8%B0/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EC%95%A0%ED%94%8C%EB%A6%AC%EC%BC%80%EC%9D%B4%EC%85%98%EC%97%90%EC%84%9C-%EB%B3%B5%EC%A0%9C-%ED%99%9C%EC%9A%A9%ED%95%98%EA%B8%B0-%EC%9D%BD%EA%B8%B0%EC%93%B0%EA%B8%B0-%EB%B6%84%EB%A6%AC-%EB%B3%B5%EC%A0%9C-%EC%A7%80%EC%97%B0-%EC%9D%B8%EA%B3%BC%EC%A0%81-%EC%9D%BD%EA%B8%B0/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-eorY15Ep.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CZzLXfqD.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>애플리케이션에서 복제 활용하기 (읽기/쓰기 분리, 복제 지연, 인과적 읽기)</h1><p>Database/RDB · 2026-10-31</p><h1>Intro</h1>
+<p>replica를 두 대 붙여놨는데 애플리케이션은 여전히 source에만 접속하고 있다면, replica는 장애에 대비한 예비 서버일 뿐이다. 읽기 요청이 대부분인 서비스라면 그 읽기를 replica로 보내서 source의 부담을 덜고 싶어진다. 스프링에서는 트랜잭션에 <code>readOnly = true</code>만 붙이면 replica로 가게 만들 수 있어서 시작은 어렵지 않다.</p>
+<p>문제는 그다음이다. replica는 항상 source보다 조금 늦다. 방금 저장한 데이터를 바로 다시 조회했는데 없다고 나오고, 잘 돌던 코드가 어떤 요청에서만 replica에 쓰기를 시도하다 실패한다. 읽기/쓰기 분리는 설정 몇 줄로 켤 수 있지만, 복제 지연을 애플리케이션이 떠안게 되는 구조라서 그걸 어떻게 다룰지까지 정해야 끝나는 작업인 것 같다.</p>
+<p>이번엔 쿠버네티스 위의 source 1대, replica 2대 환경에 스프링 애플리케이션을 붙여서 읽기/쓰기 분리를 구성하고, 복제 지연이 만드는 문제를 하나씩 일으켜본다. 그리고 방금 쓴 데이터를 읽어야 하는 경우를 GTID로 해결하고, 지연이 큰 replica를 읽기 대상에서 자동으로 빼는 방법까지 정리해본다.</p>
+<p>각 실험은 가설, 절차, 관찰, 결과 순서로 정리했고, 결과 표의 관찰 칸은 직접 돌려서 채우도록 비워뒀다.</p>
+<hr/>
+<h1>실험 환경</h1>
+<p>MySQL 8.4 파드 세 개를 StatefulSet으로 띄우고 GTID 기반 복제를 구성한다. 애플리케이션이 접속할 Service는 두 개를 따로 만든다.</p>
+<ul>
+<li>mysql-writer
+<ul>
+<li>role=source 라벨이 붙은 파드로만 보낸다. 쓰기와, 반드시 최신이어야 하는 읽기가 여기로 간다</li>
+</ul>
+</li>
+<li>mysql-reader
+<ul>
+<li>role=replica 라벨이 붙은 파드들로 나눠 보낸다. 읽기 전용 트랜잭션이 여기로 간다</li>
+</ul>
+</li>
+</ul>
+<p>스프링 애플리케이션은 로컬에서 띄우고, 두 Service는 MetalLB가 IP를 붙여주는 <code>LoadBalancer</code> 타입으로 노출한다. 실험이 끝나면 네임스페이스째 지우니 외부 노출은 실험하는 동안만이다.</p>
+<p>replica의 레디니스 프로브는 나중에 복제 지연을 반영하도록 바꾸는데, 그 내용은 뒤에서 따로 다룬다. 여기서는 일단 스크립트만 넣어둔다. 복제 연결에 쓰는 headless Service에 <code>publishNotReadyAddresses: true</code>를 준 이유도 그때 같이 설명한다.</p>
+<pre><code class="language-yaml"># lab-mysql-rw.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-mysql
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-config
+  namespace: lab-mysql
+data:
+  common.cnf: |
+    [mysqld]
+    innodb_buffer_pool_size = 256M
+    gtid_mode = ON
+    enforce_gtid_consistency = ON
+    binlog_expire_logs_seconds = 604800
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-scripts
+  namespace: lab-mysql
+data:
+  readiness.sh: |
+    #!/bin/bash
+    # 복제 채널이 없는 서버(source)는 응답만 하면 Ready
+    # replica는 수신/적용 스레드가 모두 돌고 있고, 지연이 MAX_LAG초 이하일 때만 Ready
+    MAX_LAG=5
+    status=$(mysql -uroot -p&quot;$MYSQL_ROOT_PASSWORD&quot; -e &quot;SHOW REPLICA STATUS\G&quot; 2&gt;/dev/null) || exit 1
+    [ -z &quot;$status&quot; ] &amp;&amp; exit 0
+    io=$(awk &#x27;/ Replica_IO_Running:/ {print $2}&#x27; &lt;&lt;&lt;&quot;$status&quot;)
+    sql=$(awk &#x27;/ Replica_SQL_Running:/ {print $2}&#x27; &lt;&lt;&lt;&quot;$status&quot;)
+    lag=$(awk &#x27;/ Seconds_Behind_Source:/ {print $2}&#x27; &lt;&lt;&lt;&quot;$status&quot;)
+    [ &quot;$io&quot; = &quot;Yes&quot; ] &amp;&amp; [ &quot;$sql&quot; = &quot;Yes&quot; ] &amp;&amp; [ &quot;$lag&quot; != &quot;NULL&quot; ] &amp;&amp; [ &quot;$lag&quot; -le &quot;$MAX_LAG&quot; ]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql                     # 복제 연결용 (mysql-0.mysql 같은 DNS 이름)
+  namespace: lab-mysql
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: mysql
+  ports:
+    - port: 3306
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-writer
+  namespace: lab-mysql
+spec:
+  type: LoadBalancer
+  selector:
+    app: mysql
+    role: source
+  ports:
+    - port: 3306
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-reader
+  namespace: lab-mysql
+spec:
+  type: LoadBalancer
+  selector:
+    app: mysql
+    role: replica
+  ports:
+    - port: 3306
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+  namespace: lab-mysql
+spec:
+  serviceName: mysql
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      initContainers:
+        - name: init-config
+          image: mysql:8.4
+          command:
+            - bash
+            - -c
+            - |
+              ordinal=${HOSTNAME##*-}
+              cp /mnt/config-map/common.cnf /mnt/conf.d/
+              printf &#x27;[mysqld]\nserver_id=%d\nreport_host=%s.mysql\n&#x27; \
+                $((100 + ordinal)) &quot;$HOSTNAME&quot; &gt; /mnt/conf.d/server.cnf
+          volumeMounts:
+            - { name: conf, mountPath: /mnt/conf.d }
+            - { name: config-map, mountPath: /mnt/config-map }
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: mysql-root, key: password }
+            - name: MYSQL_DATABASE
+              value: lab
+          resources:
+            requests: { cpu: 300m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          readinessProbe:
+            exec:
+              command: [&quot;bash&quot;, &quot;/scripts/readiness.sh&quot;]
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/mysql }
+            - { name: conf, mountPath: /etc/mysql/conf.d }
+            - { name: scripts, mountPath: /scripts }
+      volumes:
+        - name: conf
+          emptyDir: {}
+        - name: config-map
+          configMap: { name: mysql-config }
+        - name: scripts
+          configMap: { name: mysql-scripts }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [&quot;ReadWriteOnce&quot;]
+        storageClassName: longhorn
+        resources:
+          requests:
+            storage: 5Gi
+</code></pre>
+<pre><code class="language-bash">kubectl create namespace lab-mysql
+kubectl create secret generic mysql-root -n lab-mysql --from-literal=password=labroot
+kubectl apply -f lab-mysql-rw.yaml
+kubectl get pod -n lab-mysql -w   # mysql-0, 1, 2가 모두 READY가 될 때까지
+</code></pre>
+<h2>헬퍼</h2>
+<pre><code class="language-bash"># 사용법: echo &quot;SQL&quot; | msql 0
+msql() {
+  kubectl exec -i -n lab-mysql &quot;mysql-$1&quot; -c mysql -- \
+    bash -c &#x27;mysql -uroot -p&quot;$MYSQL_ROOT_PASSWORD&quot; -t lab 2&gt;/dev/null&#x27;
+}
+
+mall() {
+  local sql; sql=$(cat)
+  for i in 0 1 2; do echo &quot;== mysql-$i&quot;; echo &quot;$sql&quot; | msql &quot;$i&quot;; done
+}
+</code></pre>
+<h2>복제 구성</h2>
+<pre><code class="language-bash"># 1. 세 서버의 GTID 집합 확인
+#    MYSQL_DATABASE로 lab을 만드는 과정이 GTID를 남겼을 수 있다.
+#    replica 쪽에 값이 있으면 복제 연결 전에 그 replica에서만 초기화한다 (막 만든 서버라 안전함)
+echo &quot;SELECT @@gtid_executed;&quot; | mall
+# echo &quot;RESET BINARY LOGS AND GTIDS;&quot; | msql 1
+
+# 2. 복제 계정 (각 서버에 따로 만들고 binlog에는 남기지 않는다)
+mall &lt;&lt;&#x27;SQL&#x27;
+SET SESSION sql_log_bin = 0;
+CREATE USER &#x27;repl&#x27;@&#x27;%&#x27; IDENTIFIED BY &#x27;replpass&#x27;;
+GRANT REPLICATION SLAVE ON *.* TO &#x27;repl&#x27;@&#x27;%&#x27;;
+SET SESSION sql_log_bin = 1;
+SQL
+
+# 3. replica 연결 + 직접 쓰기 차단
+for i in 1 2; do
+msql &quot;$i&quot; &lt;&lt;&#x27;SQL&#x27;
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST = &#x27;mysql-0.mysql&#x27;, SOURCE_USER = &#x27;repl&#x27;, SOURCE_PASSWORD = &#x27;replpass&#x27;,
+  SOURCE_AUTO_POSITION = 1, GET_SOURCE_PUBLIC_KEY = 1;
+START REPLICA;
+SET PERSIST super_read_only = ON;
+SQL
+done
+
+# 4. 애플리케이션 계정과 테이블. source에서 만들면 복제를 타고 replica에도 생긴다
+msql 0 &lt;&lt;&#x27;SQL&#x27;
+CREATE USER &#x27;app&#x27;@&#x27;%&#x27; IDENTIFIED BY &#x27;apppass&#x27;;
+GRANT SELECT, INSERT, UPDATE, DELETE ON lab.* TO &#x27;app&#x27;@&#x27;%&#x27;;
+CREATE TABLE items (id BIGINT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100));
+SQL
+echo &quot;SHOW TABLES;&quot; | mall
+
+# 5. 트래픽 대상 지정
+kubectl label pod -n lab-mysql mysql-0 role=source
+kubectl label pod -n lab-mysql mysql-1 mysql-2 role=replica
+kubectl get svc -n lab-mysql mysql-writer mysql-reader    # EXTERNAL-IP 확인
+kubectl get endpoints -n lab-mysql mysql-writer mysql-reader   # 1.33부터 deprecated 경고가 나오지만 조회는 된다
+</code></pre>
+<p>파드에 직접 붙인 라벨은 파드가 다시 만들어지면 사라진다. 실험에서는 이걸로 충분하지만, 운영에서는 operator나 failover 도구가 이 라벨을 관리하게 된다.</p>
+<h2>실습 후 정리</h2>
+<pre><code class="language-bash">kubectl delete namespace lab-mysql
+</code></pre>
+<hr/>
+<h1>스프링에서 읽기와 쓰기를 나누는 방법</h1>
+<p>읽기/쓰기 분리의 기준은 대부분 트랜잭션의 <code>readOnly</code> 속성이다. <code>@Transactional(readOnly = true)</code>인 트랜잭션은 replica로, 나머지는 source로 보낸다. 판단 단위가 쿼리가 아니라 트랜잭션이라는 점이 중요하다. 쓰기 트랜잭션 안에서 실행되는 SELECT는 전부 source로 가고, 그래서 쓰기 직전의 확인용 조회가 replica의 오래된 데이터를 보고 잘못된 결정을 내리는 일은 생기지 않는다.</p>
+<p>애플리케이션 의존성은 웹, JPA, MySQL 드라이버면 된다.</p>
+<pre><code class="language-groovy">dependencies {
+    implementation &#x27;org.springframework.boot:spring-boot-starter-web&#x27;
+    implementation &#x27;org.springframework.boot:spring-boot-starter-data-jpa&#x27;
+    runtimeOnly &#x27;com.mysql:mysql-connector-j&#x27;
+}
+</code></pre>
+<h2>LazyConnectionDataSourceProxy에 읽기 전용 DataSource 지정하기</h2>
+<p>SpringBoot 3.2.1 이상부터 <code>LazyConnectionDataSourceProxy</code>가 읽기 전용 DataSource를 직접 받는다. 읽기 전용으로 표시된 스프링 트랜잭션 안에서는 이 DataSource에서 커넥션을 꺼내고, 나머지는 기본 DataSource를 쓴다. SpringBoot 3.2.1 이상이면 이 버전이 들어 있으니, 라우팅 클래스를 직접 만들 필요가 없는 이 방법이 가장 간단하다.</p>
+<pre><code class="language-yaml"># application.yml
+app:
+  datasource:
+    writer:
+      jdbc-url: jdbc:mysql://${WRITER_IP}:3306/lab?allowPublicKeyRetrieval=true
+      username: app
+      password: apppass
+      pool-name: writer
+      maximum-pool-size: 10
+    reader:
+      jdbc-url: jdbc:mysql://${READER_IP}:3306/lab?allowPublicKeyRetrieval=true
+      username: app
+      password: apppass
+      pool-name: reader
+      maximum-pool-size: 10
+      read-only: true          # 읽기 전용 풀의 커넥션은 처음부터 읽기 전용으로 만든다
+      max-lifetime: 60000      # 이 값을 짧게 둔 이유는 뒤의 실험 5에서 다룬다
+
+spring:
+  jpa:
+    open-in-view: false        # 이 설정이 왜 필요한지는 실험 3에서 다룬다
+</code></pre>
+<pre><code class="language-java">@Configuration
+public class DataSourceConfig {
+
+    @Bean
+    @ConfigurationProperties(&quot;app.datasource.writer&quot;)
+    public HikariDataSource writerDataSource() {
+        return new HikariDataSource();
+    }
+
+    @Bean
+    @ConfigurationProperties(&quot;app.datasource.reader&quot;)
+    public HikariDataSource readerDataSource() {
+        return new HikariDataSource();
+    }
+
+    @Bean
+    @Primary
+    public DataSource dataSource(@Qualifier(&quot;writerDataSource&quot;) DataSource writer,
+                                 @Qualifier(&quot;readerDataSource&quot;) DataSource reader) {
+        LazyConnectionDataSourceProxy proxy = new LazyConnectionDataSourceProxy(writer);
+        proxy.setReadOnlyDataSource(reader);
+        return proxy;
+    }
+}
+</code></pre>
+<p><code>@Primary</code>를 붙인 프록시가 JPA와 <code>JdbcTemplate</code>이 쓰는 DataSource가 된다. 두 Hikari 풀은 따로 만들어지니 커넥션 수, 타임아웃 같은 설정도 각자 줄 수 있다.</p>
+<p>공식 문서에 적힌 조건이 두 가지 있다. 읽기 전용 DataSource의 커넥션은 처음부터 읽기 전용으로 설정돼 있어야 하고(위의 <code>read-only: true</code>), auto-commit과 격리 수준의 기본값은 기본 DataSource와 같아야 한다. 프록시가 트랜잭션마다 이 값들을 바꿔주지 않기 때문이다.</p>
+<h2>왜 lazy 프록시여야 할까?</h2>
+<p>스프링이 트랜잭션을 시작하는 순서를 보면 이유가 보인다. 트랜잭션 매니저는 트랜잭션을 시작할 때 먼저 커넥션을 가져오고, 그 커넥션에 auto-commit 끄기, 읽기 전용 표시 같은 설정을 한 다음, 마지막에 지금 트랜잭션이 읽기 전용이라는 정보를 스레드에 기록한다. 커넥션을 고르는 시점에는 아직 이 트랜잭션이 읽기 전용인지 알 수 있는 정보가 준비되지 않은 거다.</p>
+<p><code>LazyConnectionDataSourceProxy</code>는 커넥션을 요청받으면 진짜 커넥션 대신 껍데기를 돌려준다. auto-commit이나 읽기 전용 설정은 껍데기에 기록만 해두고, 첫 SQL을 실행하는 순간에야 진짜 커넥션을 꺼낸다. 그때는 읽기 전용 여부가 확정돼 있으니 올바른 풀을 고를 수 있다. 덤으로, 트랜잭션을 열었는데 SQL을 하나도 실행하지 않으면 커넥션을 아예 꺼내지 않는다.</p>
+<h2>AbstractRoutingDataSource로 직접 라우팅하기</h2>
+<p>SpringBoot 3.2.1 이전 버전이거나, 읽기 전용 여부 말고 다른 기준(테넌트, 리전 등)으로도 나눠야 한다면 라우팅 DataSource를 직접 만든다. 오래 쓰여온 방식이라 대부분의 예제가 이 형태다.</p>
+<pre><code class="language-java">public class ReadWriteRoutingDataSource extends AbstractRoutingDataSource {
+
+    @Override
+    protected Object determineCurrentLookupKey() {
+        return TransactionSynchronizationManager.isCurrentTransactionReadOnly() ? &quot;reader&quot; : &quot;writer&quot;;
+    }
+}
+</code></pre>
+<pre><code class="language-java">@Bean
+@Primary
+public DataSource dataSource(@Qualifier(&quot;writerDataSource&quot;) DataSource writer,
+                             @Qualifier(&quot;readerDataSource&quot;) DataSource reader) {
+    ReadWriteRoutingDataSource routing = new ReadWriteRoutingDataSource();
+    routing.setTargetDataSources(Map.of(&quot;writer&quot;, writer, &quot;reader&quot;, reader));
+    routing.setDefaultTargetDataSource(writer);
+    routing.afterPropertiesSet();
+    return new LazyConnectionDataSourceProxy(routing);
+}
+</code></pre>
+<p>여기서도 바깥을 <code>LazyConnectionDataSourceProxy</code>로 감싸는 게 핵심이다. 감싸지 않으면 위에서 본 순서 때문에 <code>isCurrentTransactionReadOnly()</code>가 커넥션을 고르는 시점에 항상 false라서, 모든 트랜잭션이 조용히 source로 간다. 에러가 나지 않으니 replica가 놀고 있다는 걸 한참 뒤에 알게 되는 경우가 많다.</p>
+<p>LazyConnectionDataSourceProxy에 읽기 전용과 비교하면 클래스를 하나 더 관리해야 하고, 판단 기준이 스레드에 기록된 트랜잭션 정보라서 트랜잭션 바깥의 쿼리는 항상 writer로 간다는 차이가 있다. 기준이 읽기 전용 여부 하나뿐이라면 방법 1을 쓰는 게 낫다.</p>
+<h2>실험용 애플리케이션</h2>
+<p>엔티티와 서비스, 컨트롤러는 실험에 필요한 만큼만 만든다. 조회 결과에는 그 쿼리를 처리한 서버의 호스트명을 같이 담는다. 파드 안에서 <code>@@hostname</code>은 파드 이름이라서, 어느 서버가 응답했는지 바로 보인다.</p>
+<pre><code class="language-java">@Entity
+@Table(name = &quot;items&quot;)
+public class Item {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;
+
+    protected Item() {
+    }
+
+    public Item(String name) {
+        this.name = name;
+    }
+
+    public void rename(String name) {
+        this.name = name;
+    }
+
+    public Long getId() { return id; }
+    public String getName() { return name; }
+}
+
+public interface ItemRepository extends JpaRepository&lt;Item, Long&gt; {
+}
+
+// name이 null이면 그 서버에 아직 데이터가 없다는 뜻
+public record ItemView(Long id, String name, String servedBy) {
+}
+</code></pre>
+<pre><code class="language-java">@Service
+public class ItemService {
+
+    private final ItemRepository items;
+    private final JdbcTemplate jdbc;
+
+    public ItemService(ItemRepository items, JdbcTemplate jdbc) {
+        this.items = items;
+        this.jdbc = jdbc;
+    }
+
+    @Transactional
+    public Long create(String name) {
+        return items.save(new Item(name)).getId();
+    }
+
+    @Transactional
+    public void rename(Long id, String name) {
+        items.findById(id).orElseThrow().rename(name);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean exists(Long id) {
+        return items.existsById(id);
+    }
+
+    @Transactional(readOnly = true)
+    public ItemView find(Long id) {
+        String name = items.findById(id).map(Item::getName).orElse(null);
+        return new ItemView(id, name, currentHost());
+    }
+
+    @Transactional(readOnly = true)
+    public Map&lt;String, Object&gt; whoamiOnRead() {
+        return session();
+    }
+
+    @Transactional
+    public Map&lt;String, Object&gt; whoamiOnWrite() {
+        return session();
+    }
+
+    // 같은 트랜잭션 안의 JPA 쿼리와 JdbcTemplate 쿼리는 같은 커넥션을 쓴다
+    private String currentHost() {
+        return jdbc.queryForObject(&quot;SELECT @@hostname&quot;, String.class);
+    }
+
+    private Map&lt;String, Object&gt; session() {
+        return jdbc.queryForMap(&quot;SELECT @@hostname AS host, @@transaction_read_only AS readOnly&quot;);
+    }
+}
+</code></pre>
+<pre><code class="language-java">@RestController
+public class ItemController {
+
+    private final ItemService itemService;
+
+    public ItemController(ItemService itemService) {
+        this.itemService = itemService;
+    }
+
+    @PostMapping(&quot;/items&quot;)
+    public Map&lt;String, Long&gt; create(@RequestParam String name) {
+        return Map.of(&quot;id&quot;, itemService.create(name));
+    }
+
+    @GetMapping(&quot;/items/{id}&quot;)
+    public ItemView get(@PathVariable Long id) {
+        return itemService.find(id);
+    }
+
+    // 읽기 전용 트랜잭션으로 확인한 뒤, 쓰기 트랜잭션으로 수정한다
+    @PostMapping(&quot;/items/{id}/rename&quot;)
+    public ResponseEntity&lt;Void&gt; rename(@PathVariable Long id, @RequestParam String name) {
+        if (!itemService.exists(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        itemService.rename(id, name);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping(&quot;/whoami/read&quot;)
+    public Map&lt;String, Object&gt; whoamiOnRead() {
+        return itemService.whoamiOnRead();
+    }
+
+    @GetMapping(&quot;/whoami/write&quot;)
+    public Map&lt;String, Object&gt; whoamiOnWrite() {
+        return itemService.whoamiOnWrite();
+    }
+}
+</code></pre>
+<pre><code class="language-bash">export WRITER_IP=$(kubectl get svc -n lab-mysql mysql-writer -o jsonpath=&#x27;{.status.loadBalancer.ingress[0].ip}&#x27;)
+export READER_IP=$(kubectl get svc -n lab-mysql mysql-reader -o jsonpath=&#x27;{.status.loadBalancer.ingress[0].ip}&#x27;)
+./gradlew bootRun
+
+APP=http://localhost:8080
+</code></pre>
+<h2>실험 1 — 트랜잭션 속성에 따라 커넥션이 갈리는지 확인</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>읽기 전용 트랜잭션은 replica 중 하나로, 나머지는 source로 간다. 읽기 전용 풀의 커넥션은 서버 쪽에서도 읽기 전용 세션이다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash">curl -s $APP/whoami/write; echo
+curl -s $APP/whoami/read; echo
+
+# 순서대로 20번
+for n in $(seq 1 20); do curl -s $APP/whoami/read; echo; done | sort | uniq -c
+
+# 동시에 20번
+seq 1 20 | xargs -P 20 -I{} sh -c &quot;curl -s $APP/whoami/read; echo&quot; | sort | uniq -c
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td><code>/whoami/write</code>의 host, readOnly</td><td>mysql-0, 0</td><td></td></tr><tr><td><code>/whoami/read</code>의 host, readOnly</td><td>mysql-1 또는 mysql-2, 1</td><td></td></tr><tr><td>순서대로 20번 보냈을 때 host 분포</td><td>한쪽으로 쏠릴 수 있음</td><td></td></tr><tr><td>동시에 20번 보냈을 때 host 분포</td><td>mysql-1, mysql-2가 섞여 나옴</td><td></td></tr></tbody></table>
+<p>관찰 포인트: <code>mysql-reader</code> Service가 부하를 나누는 단위는 요청이 아니라 TCP 연결이다. Hikari 풀은 시작할 때 커넥션을 미리 만들어두는데, 이 커넥션들이 만들어지는 순간 각각 replica 하나에 고정된다. 그리고 Hikari는 방금 쓴 커넥션을 다시 쓰는 경향이 있어서, 요청을 하나씩 순서대로 보내면 같은 커넥션, 즉 같은 replica만 계속 보일 수 있다. 동시에 보내야 풀 안의 여러 커넥션이 쓰이면서 두 replica가 다 보인다. replica 간 부하 분산이 커넥션 개수 단위로 이루어진다는 건 뒤의 실험 5에서 다시 중요해진다.</p>
+<hr/>
+<h1>방금 쓴 데이터가 안 보인다.</h1>
+<p>실제 지연은 몇 밀리초에서 길어야 몇 초라서 매번 재현하기 어렵다. 그래서 replica에 일부러 3초의 지연을 건다. <code>SOURCE_DELAY</code>를 주면 replica는 받은 트랜잭션을 source에서 커밋된 시각으로부터 최소 그 시간이 지난 뒤에 적용한다. 이 값은 적용 스레드만 멈추고 바꿀 수 있다.</p>
+<pre><code class="language-bash">for i in 1 2; do
+  echo &quot;STOP REPLICA SQL_THREAD;
+        CHANGE REPLICATION SOURCE TO SOURCE_DELAY = 3;
+        START REPLICA SQL_THREAD;&quot; | msql &quot;$i&quot;
+done
+</code></pre>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>저장 직후 같은 데이터를 읽기 전용 트랜잭션으로 조회하면 replica에는 아직 없어서 <code>name</code>이 null로 나온다. 3초가 지나면 보인다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash">ID=$(curl -s -X POST &quot;$APP/items?name=first&quot; | jq -r .id)
+curl -s $APP/items/$ID; echo
+sleep 4
+curl -s $APP/items/$ID; echo
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>저장 직후 조회의 <code>name</code></td><td>null</td><td></td></tr><tr><td>4초 뒤 조회의 <code>name</code></td><td>first</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>저장은 성공했고, 조회도 에러 없이 성공했다. 다만 조회 결과가 틀렸다. 사용자 입장에서는 방금 등록한 글이 목록에 없거나, 수정한 내용이 반영되지 않은 화면을 보게 된다. 다시 새로고침하면 보이니 재현도 어렵다. 읽기/쓰기 분리를 켜는 순간, 이런 요청이 있다는 걸 전제로 설계해야 한다는 걸 보여주는 것 같다.</li>
+</ul>
+</li>
+</ul>
+<hr/>
+<h1>Open Session In View가 켜져 있으면 라우팅이 틀어진다.</h1>
+<p>SpringBoot 3.2.1 이상은 <code>spring.jpa.open-in-view</code>가 기본으로 켜져 있다. 요청이 시작될 때 JPA의 영속성 컨텍스트를 열어서 응답이 끝날 때까지 유지하는 기능인데, 읽기/쓰기 분리와 같이 쓰면 문제가 생긴다.</p>
+<p>스프링이 JPA에 넘기는 기본 설정은 커넥션을 처음 필요할 때 가져오고, 영속성 컨텍스트가 닫힐 때까지 쥐고 있는 방식이다. 그래서 OSIV가 켜져 있으면 한 요청 안에서 처음 실행된 트랜잭션이 고른 커넥션을 요청이 끝날 때까지 계속 쓴다. 첫 트랜잭션이 읽기 전용이었다면 그 요청의 이후 트랜잭션은 전부 replica 커넥션을 쓰게 된다.</p>
+<p>컨트롤러의 <code>/items/{id}/rename</code>이 바로 이 모양이다. 읽기 전용 트랜잭션으로 대상이 있는지 확인하고, 이어서 쓰기 트랜잭션으로 수정한다. 조회 서비스와 변경 서비스를 차례로 부르는 컨트롤러는 실무에서도 흔하다.</p>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>OSIV가 켜져 있으면 <code>rename</code>의 UPDATE가 replica 커넥션에서 실행되어 실패한다. 꺼져 있으면 각 트랜잭션이 자기 커넥션을 새로 고르기 때문에 성공한다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash"># 지연을 없애고 시작한다
+for i in 1 2; do
+  echo &quot;STOP REPLICA SQL_THREAD;
+        CHANGE REPLICATION SOURCE TO SOURCE_DELAY = 0;
+        START REPLICA SQL_THREAD;&quot; | msql &quot;$i&quot;
+done
+
+ID=$(curl -s -X POST &quot;$APP/items?name=osiv&quot; | jq -r .id); sleep 1
+
+# 1) 애플리케이션을 끄고, 다른 터미널에서 OSIV를 켜서 다시 띄운 뒤
+./gradlew bootRun --args=&#x27;--spring.jpa.open-in-view=true&#x27;
+curl -s -o /dev/null -w &#x27;%{http_code}\n&#x27; -X POST &quot;$APP/items/$ID/rename?name=renamed-1&quot;
+# 애플리케이션 로그에서 SQL 에러 메시지 확인
+
+# 2) 다시 끄고, OSIV를 끈 기본 설정 그대로 띄운 뒤
+./gradlew bootRun
+curl -s -o /dev/null -w &#x27;%{http_code}\n&#x27; -X POST &quot;$APP/items/$ID/rename?name=renamed-2&quot;
+echo &quot;SELECT * FROM items WHERE name LIKE &#x27;renamed%&#x27;;&quot; | msql 0
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>OSIV 켬: 응답 코드</td><td>500</td><td></td></tr><tr><td>OSIV 켬: 로그의 SQL 에러</td><td>읽기 전용 트랜잭션 또는 <code>super_read_only</code> 관련 에러</td><td></td></tr><tr><td>OSIV 끔: 응답 코드</td><td>204</td><td></td></tr><tr><td>OSIV 끔: source의 name</td><td>renamed-2</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>에러가 나서 다행인 경우다. 반대 순서, 즉 쓰기 트랜잭션이 먼저 실행된 요청에서는 이후의 읽기 전용 트랜잭션이 전부 source로 가는데, 이건 에러 없이 조용히 일어난다. 결과는 맞으니 아무도 모르고, replica로 보내려던 부하가 source에 남는다. 읽기/쓰기 분리를 쓴다면 OSIV는 끄는 게 맞는 것 같다. 끄면 컨트롤러나 뷰에서 지연 로딩을 할 수 없게 되니, 화면에 필요한 데이터는 트랜잭션 안에서 DTO로 만들어서 넘기는 방식으로 바꿔야 한다.</li>
+</ul>
+</li>
+</ul>
+<p>replica 풀의 커넥션을 <code>read-only: true</code>로 만들어둔 것도 여기서 효과가 있다. replica에는 <code>super_read_only</code>가 걸려 있어서 어차피 쓰기는 막히지만, 읽기 전용 세션이면 replica가 실수로 쓰기 가능한 상태가 되어 있더라도 이 쓰기를 한 번 더 막아준다.</p>
+<hr/>
+<h1>방금 쓴 데이터를 읽어야 할 때</h1>
+<p>실험 2의 문제를 푸는 방법은 여러 가지인데, 모든 읽기가 이 문제를 가지는 건 아니다. 다른 사용자가 쓴 글 목록, 검색 결과, 통계처럼 몇 초 늦어도 아무도 모르는 읽기가 대부분이다. 그래서 먼저 어떤 읽기가 자기가 방금 쓴 걸 봐야 하는지를 골라내고, 그 읽기에만 아래 방법을 적용한다.</p>
+<h2>그 읽기는 source에서 한다.</h2>
+<p>가장 단순하고 확실하다. 저장 직후 상세 화면처럼 방금 쓴 걸 봐야 하는 조회는 <code>readOnly</code>를 빼서 source로 보낸다. 저장 API가 저장한 결과를 응답에 바로 담아서 돌려주면 이어지는 조회 자체가 필요 없어지기도 한다.</p>
+<pre><code class="language-java">// 저장 직후 상세 조회처럼, 방금 쓴 데이터를 봐야 하는 조회
+@Transactional   // readOnly를 빼면 source로 간다
+public ItemView findOnSource(Long id) {
+    String name = items.findById(id).map(Item::getName).orElse(null);
+    return new ItemView(id, name, currentHost());
+}
+</code></pre>
+<p>이런 조회가 일부라면 이걸로 충분하다. 다만 어떤 조회가 그런지를 코드를 짜는 사람이 매번 판단해야 하고, 이 판단이 늘어날수록 source로 가는 읽기가 같이 늘어난다.</p>
+<h2>GTID로 replica가 따라잡았는지 확인하고 읽는다</h2>
+<p>GTID 복제에서는 source에서 커밋된 트랜잭션마다 고유한 ID가 붙고, 각 서버는 지금까지 실행한 GTID 집합을 <code>gtid_executed</code>로 들고 있다. 그러면 쓰기 직후의 source의 GTID 집합을 기억해뒀다가, replica에서 읽기 전에 replica가 그 집합을 다 실행했는지 확인하면 된다. MySQL에는 이걸 기다려주는 함수가 있다.</p>
+<pre><code class="language-sql">SELECT WAIT_FOR_EXECUTED_GTID_SET(&#x27;&lt;gtid 집합&gt;&#x27;, 1);
+-- 0: 전부 실행됨, 1: 1초 안에 따라잡지 못함
+</code></pre>
+<p>흐름은 이렇다.</p>
+<ol>
+<li>쓰기 트랜잭션이 커밋된 뒤, source에서 <code>@@GLOBAL.gtid_executed</code>를 읽어서 응답 헤더로 돌려준다. 이 값을 일관성 토큰이라고 한다.</li>
+<li>클라이언트는 이어지는 조회 요청에 이 토큰을 그대로 실어 보낸다.</li>
+<li>서버는 읽기 전용 트랜잭션을 열고, 그 안에서 <code>WAIT_FOR_EXECUTED_GTID_SET</code>으로 replica가 따라잡기를 짧게 기다린 뒤 조회한다.</li>
+<li>시간 안에 따라잡지 못하면 그 조회만 source에서 한다.</li>
+</ol>
+<p>여기서 놓치기 쉬운 부분이 3번이다. 대기와 조회는 반드시 같은 커넥션에서 해야 한다. <code>mysql-reader</code>는 연결 단위로 replica를 나누기 때문에, 대기는 mysql-1 커넥션에서 하고 조회는 mysql-2 커넥션에서 하면 확인한 의미가 없다. 하나의 읽기 전용 트랜잭션 안에서 둘을 실행하면 같은 커넥션이 보장된다.</p>
+<p>토큰 발급은 커밋이 끝난 뒤에 해야 한다. 그래서 트랜잭션 메서드가 반환된 다음, 트랜잭션 바깥에서 writer 풀로 바로 조회한다.</p>
+<pre><code class="language-java">@Component
+public class ConsistencyTokens {
+
+    private final JdbcTemplate writer;
+
+    public ConsistencyTokens(@Qualifier(&quot;writerDataSource&quot;) DataSource writerDataSource) {
+        this.writer = new JdbcTemplate(writerDataSource);
+    }
+
+    // 지금까지 source에서 커밋된 모든 트랜잭션의 GTID 집합
+    public String issue() {
+        String executed = writer.queryForObject(&quot;SELECT @@GLOBAL.gtid_executed&quot;, String.class);
+        // server UUID가 여러 개면 값 중간에 줄바꿈이 들어 있어서 헤더에 그대로 실을 수 없다
+        return executed.replace(&quot;\n&quot;, &quot;&quot;);
+    }
+}
+</code></pre>
+<pre><code class="language-java">@Component
+public class CausalReader {
+
+    private final TransactionTemplate replicaTx;
+    private final TransactionTemplate sourceTx;
+    private final JdbcTemplate jdbc;
+
+    public CausalReader(PlatformTransactionManager transactionManager, JdbcTemplate jdbc) {
+        this.replicaTx = new TransactionTemplate(transactionManager);
+        this.replicaTx.setReadOnly(true);
+        this.sourceTx = new TransactionTemplate(transactionManager);
+        this.jdbc = jdbc;
+    }
+
+    public &lt;T&gt; T read(@Nullable String token, Supplier&lt;T&gt; query) {
+        if (token == null || token.isBlank()) {
+            return replicaTx.execute(status -&gt; query.get());
+        }
+
+        // 대기와 조회를 한 트랜잭션 = 한 커넥션 = 한 replica에서
+        Attempt&lt;T&gt; attempt = replicaTx.execute(status -&gt; {
+            Integer result = jdbc.queryForObject(
+                    &quot;SELECT WAIT_FOR_EXECUTED_GTID_SET(?, 1)&quot;, Integer.class, token);
+            if (!Integer.valueOf(0).equals(result)) {
+                return Attempt.&lt;T&gt;notCaughtUp();
+            }
+            return Attempt.done(query.get());
+        });
+        if (attempt.caughtUp()) {
+            return attempt.value();
+        }
+
+        // 1초 안에 따라잡지 못했다 -&gt; 이 조회만 source에서
+        return sourceTx.execute(status -&gt; query.get());
+    }
+
+    private record Attempt&lt;T&gt;(boolean caughtUp, T value) {
+        static &lt;T&gt; Attempt&lt;T&gt; done(T value) { return new Attempt&lt;&gt;(true, value); }
+        static &lt;T&gt; Attempt&lt;T&gt; notCaughtUp() { return new Attempt&lt;&gt;(false, null); }
+    }
+}
+</code></pre>
+<p><code>query</code>로 넘기는 <code>itemService.find()</code>는 <code>@Transactional(readOnly = true)</code>지만, 이미 열린 트랜잭션에 참여하기 때문에 바깥 트랜잭션이 고른 커넥션을 그대로 쓴다. source로 넘어간 경우에도 마찬가지다.</p>
+<p>컨트롤러에 <code>ConsistencyTokens</code>와 <code>CausalReader</code>를 주입받고, 앞에서 만든 저장 API가 응답 헤더에 토큰을 싣도록 바꾼다. 조회 API는 토큰을 받는 것을 하나 추가한다.</p>
+<pre><code class="language-java">@PostMapping(&quot;/items&quot;)
+public ResponseEntity&lt;Map&lt;String, Long&gt;&gt; create(@RequestParam String name) {
+    Long id = itemService.create(name);      // 반환되는 시점에 커밋이 끝나 있다
+    return ResponseEntity.ok()
+            .header(&quot;X-Consistency-Token&quot;, consistencyTokens.issue())
+            .body(Map.of(&quot;id&quot;, id));
+}
+
+@GetMapping(&quot;/items/{id}/causal&quot;)
+public ItemView getCausal(@PathVariable Long id,
+                          @RequestHeader(name = &quot;X-Consistency-Token&quot;, required = false) String token) {
+    return causalReader.read(token, () -&gt; itemService.find(id));
+}
+</code></pre>
+<p><code>@@GLOBAL.gtid_executed</code>는 내 트랜잭션뿐 아니라 그 시점까지 source에서 커밋된 모든 트랜잭션을 포함한다. 그래서 필요한 것보다 조금 더 기다릴 수 있다. 다만 replica는 트랜잭션을 거의 커밋 순서대로 적용하니, 내 트랜잭션 직후에 커밋된 몇 건을 더 기다리는 정도라 실제 차이는 크지 않다.</p>
+<p>내 트랜잭션의 GTID 하나만 정확히 받고 싶다면 서버의 <code>session_track_gtids = OWN_GTID</code>와 Connector/J의 <code>trackSessionState=true</code>를 켜서, 커밋 응답에 실려 오는 GTID를 받는 방법이 있다. 다만 Connector/J는 가장 마지막 응답의 세션 상태 변화만 보관한다. 커밋 뒤에 프레임워크나 커넥션 풀이 auto-commit을 되돌리는 문장을 실행하면, 그 응답이 커밋 응답을 덮어써서 GTID를 놓친다. 이걸 피하려면 커넥션마다 <code>SessionStateChangesListener</code>를 등록해서 모든 응답을 받아야 한다. 구현이 커넥션 풀 내부까지 들어가야 해서, 지연이 아주 민감한 경우가 아니면 <code>gtid_executed</code>를 읽는 쪽이 낫다고 본다.</p>
+<p>이 방법의 대가도 분명하다. 토큰을 클라이언트가 들고 다녀야 하니 API 계약이 바뀐다. 클라이언트를 고칠 수 없다면 사용자 ID를 키로 Redis 같은 곳에 짧은 TTL로 토큰을 보관하는 방식도 있다. 그리고 대기하는 동안 replica 커넥션을 쥐고 있으니, 지연이 길어지면 읽기 풀이 대기 중인 요청으로 가득 찰 수 있다. 대기 시간은 짧게 잡고, 넘으면 source로 넘기는 게 안전하다. 마지막으로 이 함수는 복제가 멈춰 있는지를 따지지 않는다. 적용 스레드가 멈춘 replica에서도 그냥 timeout까지 기다릴 뿐이라, 멈춘 replica를 읽기 대상에서 빼는 건 따로 해야 한다. 이건 뒤에서 다룬다.</p>
+<h2>GTID로 따라잡은 replica에서만 읽기</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>지연 3초, 대기 1초 조건에서는 토큰을 실은 조회가 1초 대기 후 source에서 처리되어 최신 데이터를 돌려준다. 지연을 없애면 같은 조회가 replica에서 바로 처리된다. 토큰 없이 조회하면 실험 2처럼 null이 나온다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash">set_delay() {
+  for i in 1 2; do
+    echo &quot;STOP REPLICA SQL_THREAD;
+          CHANGE REPLICATION SOURCE TO SOURCE_DELAY = $1;
+          START REPLICA SQL_THREAD;&quot; | msql &quot;$i&quot;
+  done
+}
+
+write_item() {   # 응답 본문은 /tmp/b, 헤더는 /tmp/h
+  curl -s -D /tmp/h -o /tmp/b -X POST &quot;$APP/items?name=$1&quot;
+  ID=$(jq -r .id /tmp/b)
+  TOKEN=$(awk -F&#x27;: &#x27; &#x27;tolower($1)==&quot;x-consistency-token&quot; {print $2}&#x27; /tmp/h | tr -d &#x27;\r&#x27;)
+  echo &quot;id=$ID token=$TOKEN&quot;
+}
+
+# 지연 3초
+set_delay 3
+write_item causal-1
+curl -s $APP/items/$ID; echo                                        # 토큰 없음
+curl -s -H &quot;X-Consistency-Token: $TOKEN&quot; -w &#x27;  %{time_total}s\n&#x27; $APP/items/$ID/causal
+
+# 지연 없음
+set_delay 0
+write_item causal-2
+curl -s -H &quot;X-Consistency-Token: $TOKEN&quot; -w &#x27;  %{time_total}s\n&#x27; $APP/items/$ID/causal
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>지연 3초, 토큰 없음: name / servedBy</td><td>null / mysql-1 또는 mysql-2</td><td></td></tr><tr><td>지연 3초, 토큰 있음: name / servedBy</td><td>causal-1 / mysql-0</td><td></td></tr><tr><td>지연 3초, 토큰 있음: 응답 시간</td><td>1초 남짓</td><td></td></tr><tr><td>지연 0초, 토큰 있음: name / servedBy</td><td>causal-2 / mysql-1 또는 mysql-2</td><td></td></tr><tr><td>지연 0초, 토큰 있음: 응답 시간</td><td>수십 ms 이내</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>지연이 있을 때 토큰 있는 조회는 1초를 손해 보고 source로 갔다. 지연이 대기 시간보다 길면 이 방법은 방법 1보다 느린 방법 1이 된다. 그래서 대기 시간은 평소의 복제 지연보다 약간 긴 정도로 잡는 게 맞는 것 같다. 평소 지연이 수십 ms라면 대기 시간도 1초까지 둘 필요 없이 짧게 잡을 수 있는데, 이 함수의 timeout은 초 단위라서 1초보다 짧은 대기가 필요하면 동작을 먼저 직접 확인해봐야 한다.</li>
+</ul>
+</li>
+</ul>
+<h2>쓴 직후 일정 시간 동안 source에서 읽는다.</h2>
+<p>쓰기가 일어나면 그 사용자의 세션이나 쿠키에 지금으로부터 몇 초 뒤의 시각을 기록해두고, 그 시각 전까지는 그 사용자의 읽기를 source로 보내는 방식이다. 구현은 인터셉터 하나로 끝날 만큼 간단하다.</p>
+<p>대신 몇 초가 충분한지는 추측이다. 평소 지연보다 넉넉하게 잡으면 source로 가는 읽기가 늘고, 지연이 그 시간을 넘으면 다시 오래된 데이터를 본다. 방법 2가 실제로 따라잡았는지를 확인하는 거라면, 이건 아마 따라잡았을 거라고 가정하는 셈이다. GTID를 쓸 수 없는 환경이라면 고려할 만하다.</p>
+<h2>ProxySQL</h2>
+<p>여기까지의 판단을 애플리케이션 대신 DB 앞단의 프록시에 맡길 수도 있다. ProxySQL은 2.0부터 GTID 기반의 인과적 읽기를 지원한다. 각 MySQL 서버 옆에 ProxySQL binlog reader를 띄워서 서버마다 어떤 GTID까지 실행했는지를 ProxySQL로 실시간으로 보내고, ProxySQL은 <code>session_track_gtids</code>로 클라이언트 세션의 마지막 쓰기 GTID를 추적한다. 그리고 쿼리 규칙의 <code>gtid_from_hostgroup</code>으로 지정한 읽기에 대해, 그 GTID를 이미 실행한 replica로만 보낸다. 그런 replica가 없으면 source로 보낸다.</p>
+<p>애플리케이션 코드는 거의 바뀌지 않지만, ProxySQL과 binlog reader라는 운영 대상이 생기고 프록시가 장애 지점이 된다. 그리고 판단이 연결 세션 단위라서, 쓰기와 읽기가 같은 클라이언트 세션을 거치지 않는 구조에서는 앞의 방법처럼 토큰을 직접 다루는 게 더 정확하다. MySQL Router도 8.2부터 읽기/쓰기 분리를 지원하지만, InnoDB Cluster처럼 MySQL Shell로 구성해서 Router가 토폴로지 정보를 읽을 수 있는 환경이 전제라서 이 글처럼 직접 구성한 복제에는 쓸 수 없다.</p>
+<hr/>
+<h1>지연이 큰 replica를 읽기 대상에서 빼기</h1>
+<p>지금까지는 모든 replica가 적당히 따라오고 있다는 전제였다. 실제로는 replica 하나만 크게 뒤처지는 일이 생긴다. 무거운 분석 쿼리가 테이블 잠금을 오래 쥐고 있거나, 그 노드의 디스크가 느려지는 경우다. 그 replica로 간 읽기는 몇 분 전의 데이터를 보게 된다.</p>
+<p>쿠버네티스에서는 레디니스 프로브로 이걸 처리할 수 있다. 실험 환경에 넣어둔 <code>readiness.sh</code>가 그 역할이다. replica라면 수신과 적용 스레드가 모두 돌고 있고 <code>Seconds_Behind_Source</code>가 5초 이하일 때만 Ready를 낸다. Ready가 아닌 파드는 Service의 엔드포인트에서 빠지니, 새 연결이 그 replica로 가지 않는다.</p>
+<p>여기서 headless Service의 <code>publishNotReadyAddresses: true</code>가 필요해진다. 레디니스의 의미를 읽기 트래픽을 받아도 되는가로 바꿨기 때문에, 복제 연결에 쓰는 DNS 이름까지 레디니스에 따라 사라지면 곤란하다. 이 설정이 없으면 Ready가 아닌 파드의 <code>mysql-N.mysql</code> 이름이 DNS에서 빠져서, 예를 들어 source의 프로브가 잠깐 실패하는 순간 replica들이 source를 찾지 못하게 된다.</p>
+<p><code>Seconds_Behind_Source</code>는 적용 중인 트랜잭션이 source에서 커밋된 시각을 기준으로 계산하는 값이라 한계가 있다. 수신 스레드가 네트워크 문제로 새 트랜잭션을 못 받고 있으면, 실제로는 뒤처졌는데도 0으로 보일 수 있다. 정확한 지연이 필요하면 source가 주기적으로 시각을 기록하는 heartbeat 테이블을 두고 replica에서 그 값을 비교하거나, <code>performance_schema</code>의 복제 상태 테이블에 있는 트랜잭션별 커밋 시각을 쓴다.</p>
+<h2>지연된 replica가 엔드포인트에서 빠지는 과정</h2>
+<p>replica 하나에서 테이블 잠금을 오래 쥐어서 적용 스레드를 막는다. 적용 스레드는 돌고 있지만 앞으로 나아가지 못하니, source에 쓰기가 계속 들어오는 동안 지연이 쌓인다.</p>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>mysql-2의 지연이 5초를 넘으면 10초 안에 Ready가 풀리고 <code>mysql-reader</code>의 엔드포인트에서 빠진다. 하지만 애플리케이션이 이미 맺어둔 mysql-2 커넥션은 끊기지 않아서, 그 커넥션이 수명을 다할 때까지 읽기 일부가 계속 mysql-2로 간다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-bash"># 1. source에 1초마다 쓰기 (2분)
+for n in $(seq 1 120); do
+  echo &quot;INSERT INTO items (name) VALUES (&#x27;tick-$n&#x27;);&quot; | msql 0; sleep 1
+done &amp;
+
+# 2. mysql-2에서 items 테이블을 90초 동안 잠근다
+echo &quot;LOCK TABLES items READ; SELECT SLEEP(90); UNLOCK TABLES;&quot; | msql 2 &amp;
+
+# 3. 다른 터미널에서 관찰
+kubectl get pod -n lab-mysql -l role=replica -w
+kubectl get endpoints -n lab-mysql mysql-reader -w
+while true; do
+  echo &quot;SHOW REPLICA STATUS\G&quot; | msql 2 | grep -E &#x27; Seconds_Behind_Source| Replica_SQL_Running_State&#x27;
+  sleep 2
+done
+
+# 4. 잠금 중에 애플리케이션의 읽기가 어디로 가는지, 10초 간격으로
+for t in $(seq 1 10); do
+  date +%T
+  seq 1 20 | xargs -P 20 -I{} sh -c &quot;curl -s $APP/whoami/read; echo&quot; | sort | uniq -c
+  sleep 10
+done
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>mysql-2의 <code>Seconds_Behind_Source</code> 변화</td><td>잠금 동안 계속 증가</td><td></td></tr><tr><td>mysql-2가 NotReady가 되는 시점</td><td>지연이 5초를 넘고 10초 이내</td><td></td></tr><tr><td><code>mysql-reader</code> 엔드포인트</td><td>mysql-1만 남음</td><td></td></tr><tr><td>엔드포인트에서 빠진 직후의 읽기 분포</td><td>mysql-2가 여전히 섞여 나옴</td><td></td></tr><tr><td>mysql-2가 읽기에서 완전히 사라지는 시점</td><td>빠진 뒤 최대 60초 (<code>max-lifetime</code>)</td><td></td></tr><tr><td>잠금이 풀린 뒤</td><td>지연 해소, 다시 Ready, 엔드포인트 복귀</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>레디니스로 엔드포인트에서 빠지는 건 새 연결에만 영향을 준다. kube-proxy(iptables 모드 기준)는 엔드포인트가 빠져도 이미 맺어진 TCP 연결을 끊지 않기 때문에, Hikari 풀이 들고 있던 mysql-2 커넥션은 계속 살아서 오래된 데이터를 돌려준다. Hikari의 <code>max-lifetime</code> 기본값은 30분이라, 기본 설정이었다면 지연된 replica를 최대 30분 동안 계속 읽었을 거다.</li>
+</ul>
+</li>
+</ul>
+<p>그래서 읽기 풀의 <code>max-lifetime</code>을 60초로 짧게 줬다. 커넥션이 1분마다 새로 만들어지면서 그때마다 Ready인 replica로만 다시 붙는다. 대신 커넥션을 자주 다시 맺는 비용이 생기고, 1분이라는 창은 여전히 남는다. 이 창까지 없애야 한다면 애플리케이션이 직접 지연을 확인해야 한다. 앞의 GTID 대기가 그 역할을 하는데, 토큰 없는 읽기까지 막으려면 읽기 커넥션을 쓸 때마다 지연을 확인하는 비용을 감수해야 한다. 어디까지 감수할지는 그 서비스가 몇 초 늦은 데이터를 얼마나 견딜 수 있는지에 달린 것 같다.</p>
+<p>replica 두 대가 모두 지연되면 <code>mysql-reader</code>의 엔드포인트가 비고, 읽기 전용 트랜잭션은 커넥션을 얻지 못해 실패한다. 이때 읽기를 source로 돌리면 서비스는 살지만, 평소 replica가 나눠 받던 읽기가 한꺼번에 source로 몰린다. replica를 늘린 이유가 source의 부하였다면 그 부하에 source가 버티는지부터 확인하고 정해야 하는 문제다.</p>
+<hr/>
+<h1>정리</h1>
+<table><thead><tr><th>문제</th><th>원인</th><th>대응</th></tr></thead><tbody><tr><td>읽기 전용 트랜잭션이 전부 source로 간다</td><td>트랜잭션 정보가 준비되기 전에 커넥션을 고름</td><td><code>LazyConnectionDataSourceProxy</code>로 커넥션 획득을 첫 SQL까지 미룬다</td></tr><tr><td>쓰기가 replica에서 실패하거나, 읽기가 source에 남는다</td><td>OSIV가 요청 내내 첫 커넥션을 쥐고 있음</td><td><code>spring.jpa.open-in-view=false</code></td></tr><tr><td>방금 쓴 데이터가 안 보인다</td><td>복제 지연</td><td>그 읽기만 source로, 또는 GTID 토큰으로 따라잡은 뒤 읽기</td></tr><tr><td>지연된 replica에서 계속 읽는다</td><td>엔드포인트에서 빠져도 기존 커넥션은 유지됨</td><td>지연 기반 레디니스 + 읽기 풀의 짧은 <code>max-lifetime</code></td></tr></tbody></table>
+<ul>
+<li>읽기/쓰기 분리의 판단 단위는 트랜잭션이다. 쓰기 트랜잭션 안의 조회는 전부 source로 가니, 쓰기를 결정하는 조회가 오래된 데이터를 볼 일은 없다.</li>
+<li>SpringBoot 3.2.1 이상이면 <code>LazyConnectionDataSourceProxy.setReadOnlyDataSource()</code> 하나로 충분하다. 직접 라우팅한다면 반드시 lazy 프록시로 감싼다.</li>
+<li>replica 간 부하 분산은 Service가 연결 단위로 한다. 커넥션 풀을 쓰면 요청 단위로 고르게 나뉘지 않는다.</li>
+<li>방금 쓴 걸 봐야 하는 읽기는 많지 않다. 먼저 그 읽기를 골라내고, 그 읽기에만 source 읽기나 GTID 대기를 적용한다.</li>
+<li>GTID 대기는 반드시 조회와 같은 커넥션에서 하고, 시간 안에 못 따라잡으면 source로 넘긴다.</li>
+<li>레디니스로 지연된 replica를 빼도 이미 맺어진 커넥션은 남는다. 읽기 풀의 커넥션 수명을 짧게 둬야 실제로 빠진다.</li>
+</ul>
+<p>설정 몇 줄로 replica에 읽기를 보내는 건 금방이었는데, 그 뒤에 따라온 건 전부 replica가 늦을 수 있다는 사실을 애플리케이션이 어디서 받아낼지에 대한 결정이었다. 특히 엔드포인트에서 빠진 replica로 1분 가까이 읽기가 계속 가는 걸 보면서, 인프라 레이어에서 막았다고 생각한 문제가 애플리케이션 레이어의 커넥션 풀에서는 아직 끝나지 않았다는 걸 알게 됐다. 읽기/쓰기 분리는 DB 설정이라기보다 애플리케이션이 일관성을 어디까지 양보할지 정하는 설계인 것 같다.</p>
+<hr/>
+<h1>참고</h1>
+<ul>
+<li><a href="https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/jdbc/datasource/LazyConnectionDataSourceProxy.html">Spring Framework Javadoc, LazyConnectionDataSourceProxy</a></li>
+<li><a href="https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/jdbc/datasource/lookup/AbstractRoutingDataSource.html">Spring Framework Javadoc, AbstractRoutingDataSource</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/gtid-functions.html">MySQL 8.4 Reference Manual, Functions Used with Global Transaction Identifiers (GTIDs)</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/replication-delayed.html">MySQL 8.4 Reference Manual, Delayed Replication</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/show-replica-status.html">MySQL 8.4 Reference Manual, SHOW REPLICA STATUS Statement</a></li>
+<li><a href="https://dev.mysql.com/doc/connector-j/en/connector-j-session-state-tracker.html">MySQL Connector/J Developer Guide, Client Session State Tracker</a></li>
+<li><a href="https://dev.mysql.com/doc/mysql-router/8.4/en/router-read-write-splitting.html">MySQL Router 8.4, Read/Write Splitting</a></li>
+<li><a href="https://proxysql.com/blog/proxysql-gtid-causal-reads/">ProxySQL, GTID consistent reads</a></li>
+<li><a href="https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/">Kubernetes, Configure Liveness, Readiness and Startup Probes</a></li>
+</ul></article></div></div>
+  </body>
+</html>

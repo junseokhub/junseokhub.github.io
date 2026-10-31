@@ -8,9 +8,9 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <title>Database/RDB | Record, Then Build</title>
-    <meta name="description" content="Database/RDB 카테고리의 글 3개" />
+    <meta name="description" content="Database/RDB 카테고리의 글 4개" />
     <meta property="og:title" content="Database/RDB | Record, Then Build" />
-    <meta property="og:description" content="Database/RDB 카테고리의 글 3개" />
+    <meta property="og:description" content="Database/RDB 카테고리의 글 4개" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://junseokhub.github.io/blog/category/Database/RDB/" />
     <link rel="canonical" href="https://junseokhub.github.io/blog/category/Database/RDB/" />
@@ -31,10 +31,10 @@
         }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-4Jq8kKGq.js"></script>
+    <script type="module" crossorigin src="/assets/index-eorY15Ep.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-CZzLXfqD.css">
   </head>
   <body>
-    <div id="root"><div class="prerender-content"><h1>Database/RDB</h1><p>글 3개</p><ul><li><a href="/blog/post/%EB%B3%B5%EC%A0%9C-%EC%9C%A0%EC%8B%A4-%EB%8C%80%EB%B9%84-%EB%B0%98%EB%8F%99%EA%B8%B0-%EB%B3%B5%EC%A0%9C-crash-safe-replica-%EB%B0%B1%EC%97%85%EA%B3%BC-%EC%8B%9C%EC%A0%90-%EB%B3%B5%EA%B5%AC/">복제 유실 대비 (반동기 복제, crash-safe replica, 백업과 시점 복구)</a><p>Intro 비동기 복제로 failover를 해보면 불편한 사실 하나를 마주하게 된다. 클라이언트는 커밋 성공을 받았는데, 그 트랜잭션이 어떤 replica에도 도착하기 전에 source가 사라지면, 새 source에는 그 데이터가 없</p></li><li><a href="/blog/post/InnoDB-%EB%9D%BD%EA%B3%BC-%EA%B2%A9%EB%A6%AC-%EC%88%98%EC%A4%80-%EB%8D%B0%EB%93%9C%EB%9D%BD-%EB%B6%84%EC%84%9D/">InnoDB 락과 격리 수준, 데드락 분석</a><p>Intro 분산 락이나 버전 번호로 동시성을 제어하는 코드를 짜다 보면, 정작 그 아래에서 DB가 어떤 락을 걸고 있는지는 모른 채로 지나가게 된다. 그러다 운영에서 Deadlock found when trying to get loc</p></li><li><a href="/blog/post/MySQL-%EA%B8%B0%EB%B3%B8-%EA%B0%9C%EB%85%90-InnoDB-%EA%B5%AC%EC%A1%B0-redo-log-binlog-2%EB%8B%A8%EA%B3%84-%EC%BB%A4%EB%B0%8B/">MySQL 기본 개념 (InnoDB 구조, redo log, binlog, 2단계 커밋)</a><p>Intro 복제, GTID, 장애 대응을 공부하려고 보니 계속 같은 단어들이 나왔다. binlog, redo log, 버퍼 풀, 2단계 커밋. 대충 로그 파일이겠거니 하고 넘어가면, 복제가 왜 어긋나는지, 크래시 후에 왜 데이터가 사</p></li></ul></div></div>
+    <div id="root"><div class="prerender-content"><h1>Database/RDB</h1><p>글 4개</p><ul><li><a href="/blog/post/%EC%95%A0%ED%94%8C%EB%A6%AC%EC%BC%80%EC%9D%B4%EC%85%98%EC%97%90%EC%84%9C-%EB%B3%B5%EC%A0%9C-%ED%99%9C%EC%9A%A9%ED%95%98%EA%B8%B0-%EC%9D%BD%EA%B8%B0%EC%93%B0%EA%B8%B0-%EB%B6%84%EB%A6%AC-%EB%B3%B5%EC%A0%9C-%EC%A7%80%EC%97%B0-%EC%9D%B8%EA%B3%BC%EC%A0%81-%EC%9D%BD%EA%B8%B0/">애플리케이션에서 복제 활용하기 (읽기/쓰기 분리, 복제 지연, 인과적 읽기)</a><p>Intro replica를 두 대 붙여놨는데 애플리케이션은 여전히 source에만 접속하고 있다면, replica는 장애에 대비한 예비 서버일 뿐이다. 읽기 요청이 대부분인 서비스라면 그 읽기를 replica로 보내서 source의 </p></li><li><a href="/blog/post/%EB%B3%B5%EC%A0%9C-%EC%9C%A0%EC%8B%A4-%EB%8C%80%EB%B9%84-%EB%B0%98%EB%8F%99%EA%B8%B0-%EB%B3%B5%EC%A0%9C-crash-safe-replica-%EB%B0%B1%EC%97%85%EA%B3%BC-%EC%8B%9C%EC%A0%90-%EB%B3%B5%EA%B5%AC/">복제 유실 대비 (반동기 복제, crash-safe replica, 백업과 시점 복구)</a><p>Intro 비동기 복제로 failover를 해보면 불편한 사실 하나를 마주하게 된다. 클라이언트는 커밋 성공을 받았는데, 그 트랜잭션이 어떤 replica에도 도착하기 전에 source가 사라지면, 새 source에는 그 데이터가 없</p></li><li><a href="/blog/post/InnoDB-%EB%9D%BD%EA%B3%BC-%EA%B2%A9%EB%A6%AC-%EC%88%98%EC%A4%80-%EB%8D%B0%EB%93%9C%EB%9D%BD-%EB%B6%84%EC%84%9D/">InnoDB 락과 격리 수준, 데드락 분석</a><p>Intro 분산 락이나 버전 번호로 동시성을 제어하는 코드를 짜다 보면, 정작 그 아래에서 DB가 어떤 락을 걸고 있는지는 모른 채로 지나가게 된다. 그러다 운영에서 Deadlock found when trying to get loc</p></li><li><a href="/blog/post/MySQL-%EA%B8%B0%EB%B3%B8-%EA%B0%9C%EB%85%90-InnoDB-%EA%B5%AC%EC%A1%B0-redo-log-binlog-2%EB%8B%A8%EA%B3%84-%EC%BB%A4%EB%B0%8B/">MySQL 기본 개념 (InnoDB 구조, redo log, binlog, 2단계 커밋)</a><p>Intro 복제, GTID, 장애 대응을 공부하려고 보니 계속 같은 단어들이 나왔다. binlog, redo log, 버퍼 풀, 2단계 커밋. 대충 로그 파일이겠거니 하고 넘어가면, 복제가 왜 어긋나는지, 크래시 후에 왜 데이터가 사</p></li></ul></div></div>
   </body>
 </html>
