@@ -3115,7 +3115,7 @@ dependencies {
 \`\`\`
 
 ## LazyConnectionDataSourceProxy에 읽기 전용 DataSource 지정하기
-SpringBoot 3.2.1 이상부터 \`LazyConnectionDataSourceProxy\`가 읽기 전용 DataSource를 직접 받는다. 읽기 전용으로 표시된 스프링 트랜잭션 안에서는 이 DataSource에서 커넥션을 꺼내고, 나머지는 기본 DataSource를 쓴다. SpringBoot 3.2.1 이상이면 이 버전이 들어 있으니, 라우팅 클래스를 직접 만들 필요가 없는 이 방법이 가장 간단하다.
+Spring Boot 3.2.1 이상부터 \`LazyConnectionDataSourceProxy\`가 읽기 전용 DataSource를 직접 받는다. 읽기 전용으로 표시된 스프링 트랜잭션 안에서는 이 DataSource에서 커넥션을 꺼내고, 나머지는 기본 DataSource를 쓴다. Spring Boot 3.2.1 이상이면 이 버전이 들어 있으니, 라우팅 클래스를 직접 만들 필요가 없는 이 방법이 가장 간단하다.
 
 \`\`\`yaml
 # application.yml
@@ -3178,7 +3178,7 @@ public class DataSourceConfig {
 \`LazyConnectionDataSourceProxy\`는 커넥션을 요청받으면 진짜 커넥션 대신 껍데기를 돌려준다. auto-commit이나 읽기 전용 설정은 껍데기에 기록만 해두고, 첫 SQL을 실행하는 순간에야 진짜 커넥션을 꺼낸다. 그때는 읽기 전용 여부가 확정돼 있으니 올바른 풀을 고를 수 있다. 덤으로, 트랜잭션을 열었는데 SQL을 하나도 실행하지 않으면 커넥션을 아예 꺼내지 않는다.
 
 ## AbstractRoutingDataSource로 직접 라우팅하기
-SpringBoot 3.2.1 이전 버전이거나, 읽기 전용 여부 말고 다른 기준(테넌트, 리전 등)으로도 나눠야 한다면 라우팅 DataSource를 직접 만든다. 오래 쓰여온 방식이라 대부분의 예제가 이 형태다.
+Spring Boot 3.2.1 이전 버전이거나, 읽기 전용 여부 말고 다른 기준(테넌트, 리전 등)으로도 나눠야 한다면 라우팅 DataSource를 직접 만든다. 오래 쓰여온 방식이라 대부분의 예제가 이 형태다.
 
 \`\`\`java
 public class ReadWriteRoutingDataSource extends AbstractRoutingDataSource {
@@ -3408,7 +3408,7 @@ curl -s $APP/items/$ID; echo
 ---
 
 # Open Session In View가 켜져 있으면 라우팅이 틀어진다.
-SpringBoot 3.2.1 이상은 \`spring.jpa.open-in-view\`가 기본으로 켜져 있다. 요청이 시작될 때 JPA의 영속성 컨텍스트를 열어서 응답이 끝날 때까지 유지하는 기능인데, 읽기/쓰기 분리와 같이 쓰면 문제가 생긴다.
+Spring Boot 3.2.1 이상은 \`spring.jpa.open-in-view\`가 기본으로 켜져 있다. 요청이 시작될 때 JPA의 영속성 컨텍스트를 열어서 응답이 끝날 때까지 유지하는 기능인데, 읽기/쓰기 분리와 같이 쓰면 문제가 생긴다.
 
 스프링이 JPA에 넘기는 기본 설정은 커넥션을 처음 필요할 때 가져오고, 영속성 컨텍스트가 닫힐 때까지 쥐고 있는 방식이다. 그래서 OSIV가 켜져 있으면 한 요청 안에서 처음 실행된 트랜잭션이 고른 커넥션을 요청이 끝날 때까지 계속 쓴다. 첫 트랜잭션이 읽기 전용이었다면 그 요청의 이후 트랜잭션은 전부 replica 커넥션을 쓰게 된다.
 
@@ -3702,7 +3702,7 @@ replica 두 대가 모두 지연되면 \`mysql-reader\`의 엔드포인트가 �
 | 지연된 replica에서 계속 읽는다 | 엔드포인트에서 빠져도 기존 커넥션은 유지됨 | 지연 기반 레디니스 + 읽기 풀의 짧은 \`max-lifetime\` |
 
 - 읽기/쓰기 분리의 판단 단위는 트랜잭션이다. 쓰기 트랜잭션 안의 조회는 전부 source로 가니, 쓰기를 결정하는 조회가 오래된 데이터를 볼 일은 없다.
-- SpringBoot 3.2.1 이상이면 \`LazyConnectionDataSourceProxy.setReadOnlyDataSource()\` 하나로 충분하다. 직접 라우팅한다면 반드시 lazy 프록시로 감싼다.
+- Spring Boot 3.2.1 이상이면 \`LazyConnectionDataSourceProxy.setReadOnlyDataSource()\` 하나로 충분하다. 직접 라우팅한다면 반드시 lazy 프록시로 감싼다.
 - replica 간 부하 분산은 Service가 연결 단위로 한다. 커넥션 풀을 쓰면 요청 단위로 고르게 나뉘지 않는다.
 - 방금 쓴 걸 봐야 하는 읽기는 많지 않다. 먼저 그 읽기를 골라내고, 그 읽기에만 source 읽기나 GTID 대기를 적용한다.
 - GTID 대기는 반드시 조회와 같은 커넥션에서 하고, 시간 안에 못 따라잡으면 source로 넘긴다.
