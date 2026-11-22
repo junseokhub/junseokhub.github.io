@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <title>대용량 테이블 관리 (인덱스, 온라인 스키마 변경, 파티셔닝, 아카이빙) | Record, Then Build</title>
+    <meta name="description" content="Intro 처음엔 잘 돌던 테이블이 천만 건을 넘기면서 이상해지기 시작한다. 어떤 조회는 여전히 빠른데 어떤 조회는 수 초가 걸리고, 컬럼 하나 추가하는 ALTER를 걸었더니 상관없는 SELECT까지 줄줄이 멈춘다. 1년 지난 데이터" />
+    <meta property="og:title" content="대용량 테이블 관리 (인덱스, 온라인 스키마 변경, 파티셔닝, 아카이빙) | Record, Then Build" />
+    <meta property="og:description" content="Intro 처음엔 잘 돌던 테이블이 천만 건을 넘기면서 이상해지기 시작한다. 어떤 조회는 여전히 빠른데 어떤 조회는 수 초가 걸리고, 컬럼 하나 추가하는 ALTER를 걸었더니 상관없는 SELECT까지 줄줄이 멈춘다. 1년 지난 데이터" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://junseokhub.github.io/blog/post/%EB%8C%80%EC%9A%A9%EB%9F%89-%ED%85%8C%EC%9D%B4%EB%B8%94-%EA%B4%80%EB%A6%AC-%EC%9D%B8%EB%8D%B1%EC%8A%A4-%EC%98%A8%EB%9D%BC%EC%9D%B8-%EC%8A%A4%ED%82%A4%EB%A7%88-%EB%B3%80%EA%B2%BD-%ED%8C%8C%ED%8B%B0%EC%85%94%EB%8B%9D-%EC%95%84%EC%B9%B4%EC%9D%B4%EB%B9%99/" />
+    <link rel="canonical" href="https://junseokhub.github.io/blog/post/%EB%8C%80%EC%9A%A9%EB%9F%89-%ED%85%8C%EC%9D%B4%EB%B8%94-%EA%B4%80%EB%A6%AC-%EC%9D%B8%EB%8D%B1%EC%8A%A4-%EC%98%A8%EB%9D%BC%EC%9D%B8-%EC%8A%A4%ED%82%A4%EB%A7%88-%EB%B3%80%EA%B2%BD-%ED%8C%8C%ED%8B%B0%EC%85%94%EB%8B%9D-%EC%95%84%EC%B9%B4%EC%9D%B4%EB%B9%99/" />
+    <style>
+      /* 프리렌더된 정적 콘텐츠는 크롤러용 — 사용자에겐 숨겨 FOUC 방지 */
+      #root > .prerender-content { display: none; }
+    </style>
+    <script>
+      // GitHub Pages SPA 라우팅 복원
+      (function() {
+        var p = window.location.search.match(/p=([^&]*)/);
+        if (p) {
+          window.history.replaceState(null, null,
+            decodeURIComponent(p[1]) +
+            (window.location.search.match(/q=([^&]*)/) ? '?' + decodeURIComponent(window.location.search.match(/q=([^&]*)/)[1]) : '') +
+            window.location.hash
+          );
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-gQjcJUel.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DtZ2jYy9.css">
+  </head>
+  <body>
+    <div id="root"><div class="prerender-content"><article><h1>대용량 테이블 관리 (인덱스, 온라인 스키마 변경, 파티셔닝, 아카이빙)</h1><p>Database/RDB · 2026-11-22</p><h1>Intro</h1>
+<p>처음엔 잘 돌던 테이블이 천만 건을 넘기면서 이상해지기 시작한다. 어떤 조회는 여전히 빠른데 어떤 조회는 수 초가 걸리고, 컬럼 하나 추가하는 ALTER를 걸었더니 상관없는 SELECT까지 줄줄이 멈춘다. 1년 지난 데이터를 지우려고 DELETE를 한 번 실행했더니, 그동안 다른 요청의 UPDATE가 십수 초씩 기다린다.</p>
+<p>이 문제들은 원인이 다 다르다. 조회가 느린 건 읽는 행 수의 문제고, ALTER가 다른 쿼리를 멈추는 건 메타데이터 락의 문제고, 대량 삭제가 다른 요청을 막는 건 트랜잭션 크기와 행 락의 문제다. 그래서 테이블이 크다는 하나의 증상에 대한 대책도 인덱스, 온라인 스키마 변경, 파티셔닝, 아카이빙으로 나뉘는 것 같다.</p>
+<p>이번엔 MySQL 8.4에 천만 건짜리 활동 기록 테이블을 만들고, 이 네 가지를 차례로 실험해본다. 각 실험은 가설, 절차, 관찰, 결과 순서로 정리했고, 결과 표의 관찰 칸은 직접 돌려서 채우도록 비워뒀다.</p>
+<hr/>
+<h1>테이블이 커지면 무엇이 느려지나</h1>
+<p>InnoDB 테이블은 기본 키 순서로 정렬된 B+tree다. 트리의 높이는 행 수에 로그로 늘어나서, 천만 건이 돼도 루트에서 데이터까지 서너 페이지면 닿는다. 기본 키나 잘 맞는 인덱스로 몇 건을 찾는 쿼리는 테이블이 커져도 거의 느려지지 않는다는 뜻이다.</p>
+<p>느려지는 건 행 수에 비례하는 작업들이다.</p>
+<table><thead><tr><th>증상</th><th>원인</th><th>대책</th></tr></thead><tbody><tr><td>특정 조회만 느려진다</td><td>인덱스가 맞지 않아 많은 행을 읽음. 데이터가 버퍼 풀보다 커지면 그 읽기가 디스크로 감</td><td>인덱스 설계</td></tr><tr><td>ALTER가 오래 걸리고 다른 쿼리까지 멈춘다</td><td>테이블 재구성 + 메타데이터 락</td><td>온라인 스키마 변경</td></tr><tr><td>오래된 데이터 삭제가 다른 요청을 막는다</td><td>하나의 거대한 트랜잭션, 넓은 범위의 행 락</td><td>파티셔닝, 나눠서 아카이빙</td></tr><tr><td>백업, 복구, replica 생성이 오래 걸린다</td><td>데이터 총량</td><td>아카이빙으로 운영 테이블 자체를 작게 유지</td></tr></tbody></table>
+<hr/>
+<h1>실험 환경</h1>
+<p>MySQL 8.4 단일 인스턴스에 버퍼 풀을 일부러 256MB로 작게 잡았다. 사용자 10만 명의 1년치(2025-10-01 ~ 2026-10-01) 활동 기록 천만 건, 1.3~1.5GB 정도를 넣어서 데이터 대부분이 메모리에 올라오지 못하게 했다. 운영에서 데이터가 메모리보다 큰 상황과 비슷하다. <code>created_at</code>은 <code>id</code>가 커질수록 늦어지게 해서, 실제로 쌓이는 로그성 데이터처럼 기본 키 순서와 시간 순서가 거의 같다.</p>
+<pre><code class="language-sql">CREATE TABLE activity_log (
+  id         BIGINT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  user_id    INT UNSIGNED     NOT NULL,
+  action     TINYINT UNSIGNED NOT NULL,
+  status     TINYINT UNSIGNED NOT NULL,
+  created_at DATETIME         NOT NULL,
+  payload    VARCHAR(200)     NOT NULL,
+  PRIMARY KEY (id)
+);
+</code></pre>
+<hr/>
+<h1>인덱스, 쿼리가 읽는 행 수를 줄인다</h1>
+<p>대용량 테이블에서 가장 먼저 볼 건 결국 인덱스다. 인덱스가 하는 일은 쿼리가 읽어야 하는 행의 수를 줄이는 거라서, 테이블이 클수록 인덱스가 있고 없고의 차이가 커진다.</p>
+<p><code>EXPLAIN ANALYZE</code>는 쿼리를 실제로 실행하고, 각 단계에서 몇 행을 읽었고 얼마나 걸렸는지를 보여준다. 예상치만 보여주는 <code>EXPLAIN</code>과 달리 실제 값이라, 인덱스를 비교할 때는 이걸 쓴다.</p>
+<h2>인덱스 설계에 따라 읽는 행 수가 달라진다</h2>
+<p>한 사용자의 최근 3개월 활동을 최신순으로 20건 가져오는 쿼리다. 마이페이지의 활동 내역 같은 조회다.</p>
+<pre><code class="language-sql">SELECT id, action, status, created_at
+FROM activity_log
+WHERE user_id = 4242 AND created_at &gt;= &#x27;2026-07-01&#x27;
+ORDER BY created_at DESC
+LIMIT 20;
+</code></pre>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>인덱스가 없으면 천만 건을 다 읽는다. <code>user_id</code> 단일 인덱스면 그 사용자의 100건 정도만 읽고 정렬한다. <code>(user_id, created_at)</code> 복합 인덱스면 범위 안의 행만 이미 정렬된 순서로 읽고 바로 멈춘다. 같은 두 컬럼이라도 순서를 <code>(created_at, user_id)</code>로 바꾸면 3개월치 전체를 훑게 되어 크게 느려진다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+<ul>
+<li>인덱스를 하나씩 추가하면서 위 쿼리를 <code>EXPLAIN ANALYZE</code>로 실행한다. 복합 인덱스 두 개는 <code>FORCE INDEX</code>로 각각 강제한다. 마지막엔 조회 컬럼을 <code>id, created_at</code>으로 줄여서 인덱스만으로 답하게 한다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-sql">ALTER TABLE activity_log ADD INDEX idx_user (user_id);
+ALTER TABLE activity_log
+  ADD INDEX idx_user_created (user_id, created_at),
+  ADD INDEX idx_created_user (created_at, user_id);
+</code></pre>
+<table><thead><tr><th>인덱스</th><th>예상 실행 계획</th><th>예상 읽은 행</th><th>관찰 (시간 / 행)</th></tr></thead><tbody><tr><td>없음</td><td>Table scan → Filter → Sort</td><td>10,000,000</td><td></td></tr><tr><td><code>(user_id)</code></td><td>Index lookup → Filter → Sort</td><td>100 정도</td><td></td></tr><tr><td><code>(user_id, created_at)</code></td><td>Index range scan (reverse), 정렬 없음</td><td>20 이하</td><td></td></tr><tr><td><code>(created_at, user_id)</code></td><td>Index range scan (reverse), 3개월치를 훑음</td><td>수십만</td><td></td></tr><tr><td><code>(user_id, created_at)</code> + 조회 컬럼 축소</td><td>Covering index range scan</td><td>20 이하</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>인덱스가 없을 때 시간이 오래 걸리는 이유는 행 수만이 아니다. 테이블이 버퍼 풀보다 훨씬 커서, 천만 건을 읽는 동안 대부분의 페이지를 디스크에서 가져와야 한다. 같은 쿼리를 바로 한 번 더 실행해도 크게 빨라지지 않는 것도 그 때문이다. 버퍼 풀에 다 담기지 않으니 앞에서 읽은 페이지가 뒤에서 읽은 페이지에 밀려난다.</li>
+</ul>
+</li>
+</ul>
+<h2>복합 인덱스의 컬럼 순서</h2>
+<p>같은 두 컬럼인데 결과가 크게 갈리는 이유는 인덱스가 정렬되는 방식에 있다. <code>(user_id, created_at)</code> 인덱스는 user_id로 먼저 정렬하고, 같은 user_id 안에서 created_at으로 정렬한다. 그래서 <code>user_id = 4242</code>인 구간 안에서 created_at 범위가 연속으로 붙어 있고, 거기서 역순으로 20건만 읽으면 끝난다.</p>
+<p><code>(created_at, user_id)</code>는 반대다. created_at 범위는 연속이지만, 그 안에서 user_id는 흩어져 있다. 결국 3개월치 인덱스 항목을 훑으면서 user_id가 4242인 걸 골라내야 한다.</p>
+<p>그래서 복합 인덱스의 순서는 대체로 이렇게 정한다.</p>
+<ul>
+<li>등호(<code>=</code>)로 비교하는 컬럼을 앞에 둔다.</li>
+<li>범위(<code>&gt;=</code>, <code>BETWEEN</code>)나 정렬(<code>ORDER BY</code>)에 쓰는 컬럼을 그 뒤에 둔다. 범위 조건이 걸린 컬럼 뒤의 컬럼은 탐색 범위를 좁히는 데 쓰이지 못한다.</li>
+<li>조회하는 컬럼까지 인덱스에 들어 있으면 테이블을 다시 읽지 않는다(Covering index). InnoDB의 보조 인덱스에는 기본 키가 항상 같이 들어 있어서, <code>id</code>는 따로 넣지 않아도 인덱스만으로 답이 나온다.</li>
+</ul>
+<h2>인덱스의 비용과 정리</h2>
+<p>인덱스는 공짜가 아니다. 쓰기마다 모든 보조 인덱스를 같이 고쳐야 하고, 인덱스 자체가 디스크와 버퍼 풀을 차지한다. 테이블이 클수록 이 비용도 같이 커진다.</p>
+<pre><code class="language-sql">SELECT index_name, ROUND(stat_value * @@innodb_page_size / 1024 / 1024) AS size_mb
+FROM mysql.innodb_index_stats
+WHERE table_name = &#x27;activity_log&#x27; AND stat_name = &#x27;size&#x27;;
+</code></pre>
+<table><thead><tr><th>인덱스</th><th>크기 (관찰)</th></tr></thead><tbody><tr><td>PRIMARY (데이터 자체)</td><td></td></tr><tr><td>idx_user</td><td></td></tr><tr><td>idx_user_created</td><td></td></tr><tr><td>idx_created_user</td><td></td></tr></tbody></table>
+<p>쓰지 않는 인덱스는 <code>sys.schema_unused_indexes</code>로 찾을 수 있다. 다만 이 뷰는 서버가 시작된 이후의 사용 기록만 보기 때문에, 재시작 직후나 한 달에 한 번 도는 배치가 쓰는 인덱스는 안 쓰는 것처럼 보일 수 있다.</p>
+<p>인덱스를 바로 지우는 대신 보이지 않게 만들어두는 방법이 있다. <code>INVISIBLE</code> 인덱스는 옵티마이저가 쓰지 않지만 쓰기 때는 계속 유지된다. 지웠다가 필요해서 다시 만들면 천만 건짜리 인덱스를 처음부터 다시 만들어야 하지만, 보이지 않게만 해뒀다면 다시 보이게 하는 건 즉시 끝난다. 며칠 지켜보고 문제가 없으면 그때 지운다.</p>
+<pre><code class="language-sql">ALTER TABLE activity_log ALTER INDEX idx_created_user INVISIBLE;
+</code></pre>
+<hr/>
+<h1>온라인 스키마 변경, 큰 테이블의 ALTER</h1>
+<p>작은 테이블의 ALTER는 순식간에 끝나서 신경 쓸 일이 없다. 천만 건이 되면 같은 ALTER가 몇 분에서 몇 시간이 걸리고, 그동안 쓰기가 막히는지 아닌지가 장애 여부를 가른다.</p>
+<p>MySQL의 ALTER는 실행 방식이 세 가지다.</p>
+<table><thead><tr><th>방식</th><th>하는 일</th><th>쓰기 허용</th><th>예</th></tr></thead><tbody><tr><td><code>INSTANT</code></td><td>데이터 사전의 메타데이터만 바꿈</td><td>허용</td><td>컬럼 추가/삭제, 기본값 변경</td></tr><tr><td><code>INPLACE</code></td><td>테이블을 복사하지 않고 엔진 안에서 처리. 재구성이 필요한 경우도 있음</td><td>대부분 허용 (<code>LOCK=NONE</code>)</td><td>보조 인덱스 추가, 일부 VARCHAR 길이 변경</td></tr><tr><td><code>COPY</code></td><td>새 테이블을 만들어 전체를 복사</td><td>막힘</td><td>컬럼 타입 변경, 파티셔닝 적용</td></tr></tbody></table>
+<p>중요한 습관이 하나 있다. ALTER에 <code>ALGORITHM</code>과 <code>LOCK</code>을 명시하는 거다. 명시하지 않으면 MySQL이 가능한 방식 중에서 고르는데, 생각과 달리 COPY로 실행돼서 쓰기가 막힐 수 있다. 명시해두면 그 방식이 불가능할 때 실행하지 않고 바로 에러를 낸다.</p>
+<h2>변경 종류에 따라 실행 방식이 다르다</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>컬럼 추가는 INSTANT로 즉시 끝난다. 인덱스 추가는 INPLACE로 시간이 걸리지만 쓰기를 막지 않는다. 컬럼 타입 변경을 INPLACE로 요청하면 실행되지 않고 에러가 난다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+</li>
+</ul>
+<pre><code class="language-sql">ALTER TABLE activity_log ADD COLUMN memo VARCHAR(50) NULL, ALGORITHM=INSTANT;
+ALTER TABLE activity_log ADD INDEX idx_status (status), ALGORITHM=INPLACE, LOCK=NONE;
+ALTER TABLE activity_log MODIFY status SMALLINT UNSIGNED NOT NULL, ALGORITHM=INPLACE, LOCK=NONE;
+</code></pre>
+<table><thead><tr><th>변경</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>컬럼 추가 (INSTANT)</td><td>1초 미만</td><td></td></tr><tr><td>인덱스 추가 (INPLACE, LOCK=NONE)</td><td>수십 초, 그동안 쓰기 가능</td><td></td></tr><tr><td>컬럼 타입 변경 (INPLACE 요청)</td><td>ERROR 1846, COPY를 쓰라는 안내</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>INSTANT는 테이블 크기와 상관없이 즉시 끝난다. 다만 한 테이블에 INSTANT로 컬럼을 추가하거나 지울 수 있는 횟수에 상한(8.4 기준 64번)이 있어서, 넘으면 테이블을 한 번 재구성해야 한다. INPLACE 인덱스 추가는 쓰기를 막지 않지만, replica가 있다면 이야기가 달라진다. replica는 source에서 ALTER가 끝난 다음에야 같은 ALTER를 시작하고, 이 ALTER가 끝날 때까지 뒤에 오는 트랜잭션을 적용하지 못한다. source에서 10분 걸린 인덱스 추가는 replica에 10분짜리 지연을 만든다.</li>
+</ul>
+</li>
+</ul>
+<h2>ALTER가 다른 쿼리를 멈추는 이유</h2>
+<p>INSTANT ALTER도 아주 잠깐은 테이블에 대한 배타적인 메타데이터 락(MDL)이 필요하다. MDL은 테이블 구조를 보호하는 락이라, 그 테이블을 쓰는 모든 트랜잭션이 끝날 때까지 기다린다. 문제는 ALTER가 기다리는 동안 그 뒤에 오는 SELECT까지 ALTER 뒤에 줄을 선다는 거다.</p>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>커밋하지 않은 트랜잭션이 테이블을 한 번이라도 읽어둔 상태면, INSTANT ALTER도 그 트랜잭션이 끝날 때까지 기다린다. 그 사이 들어온 평범한 SELECT도 같이 멈춘다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+<ul>
+<li>세션 네 개를 쓴다. A~C는 차례로 몇 초 안에 실행하고, D로 상태를 본다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-sql">-- [A] 테이블을 읽은 채로 커밋하지 않는 트랜잭션 (60초)
+START TRANSACTION; SELECT id FROM activity_log LIMIT 1; SELECT SLEEP(60); COMMIT;
+
+-- [B] 즉시 끝나야 할 ALTER. 오래 기다리지 않도록 lock_wait_timeout을 짧게
+SET SESSION lock_wait_timeout = 20;
+ALTER TABLE activity_log ADD COLUMN memo VARCHAR(50) NULL, ALGORITHM=INSTANT;
+
+-- [C] 평범한 조회
+SELECT COUNT(*) FROM activity_log WHERE id &lt; 100;
+
+-- [D] 누가 무엇을 기다리는지
+SELECT object_name, lock_type, lock_status FROM performance_schema.metadata_locks
+WHERE object_schema = &#x27;lab&#x27;;
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>ALTER의 상태</td><td>Waiting for table metadata lock</td><td></td></tr><tr><td>평범한 SELECT의 상태</td><td>Waiting for table metadata lock</td><td></td></tr><tr><td><code>metadata_locks</code></td><td>SHARED_READ GRANTED(A), EXCLUSIVE PENDING(ALTER), SHARED_READ PENDING(SELECT)</td><td></td></tr><tr><td>ALTER 결과</td><td>20초 후 ERROR 1205 Lock wait timeout</td><td></td></tr><tr><td>SELECT 소요 시간</td><td>ALTER가 포기할 때까지 약 20초</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>SELECT가 막힌 건 A의 트랜잭션 때문이 아니라 ALTER 때문이다. A가 가진 SHARED_READ 락은 SELECT의 SHARED_READ와 충돌하지 않는다. 그런데 대기열에 배타 락을 기다리는 ALTER가 먼저 서 있어서, 뒤에 온 SELECT도 그 뒤에 줄을 섰다. 운영에서 이게 커넥션 풀 고갈로 이어진다. <code>lock_wait_timeout</code>의 기본값은 1년이라서, 짧게 주지 않으면 ALTER는 사실상 무한히 기다리고 그동안 이 테이블에 대한 모든 요청이 쌓인다.</li>
+</ul>
+</li>
+</ul>
+<p>그래서 운영에서 ALTER를 걸 때는 이렇게 한다.</p>
+<ul>
+<li><code>lock_wait_timeout</code>을 몇 초로 짧게 주고, 실패하면 잠시 후 재시도한다. 막히는 쪽이 서비스가 아니라 ALTER가 되게 하는 거다.</li>
+<li>실행 전에 <code>information_schema.innodb_trx</code>에서 오래 열려 있는 트랜잭션이 있는지 본다.</li>
+</ul>
+<h2>COPY가 필요한 변경은 도구로</h2>
+<p>컬럼 타입 변경이나 파티셔닝 적용처럼 COPY가 필요한 변경을 천만 건 테이블에 그대로 걸면, 복사가 끝날 때까지 쓰기가 막힌다. 이럴 때 쓰는 무료 도구가 둘 있다.</p>
+<ul>
+<li>gh-ost
+<ul>
+<li>GitHub이 만든 도구다. 새 구조의 빈 테이블을 만들고 기존 데이터를 조금씩 복사하면서, 그 사이의 변경은 binlog를 읽어서 따라간다. 트리거를 쓰지 않아서 원본 테이블에 주는 부담이 적고, 복사를 중간에 멈추거나 속도를 조절할 수 있다. binlog를 ROW 형식(<code>binlog_row_image=FULL</code>)으로 남겨야 하고 외래 키가 있는 테이블은 지원하지 않는다.</li>
+</ul>
+</li>
+<li>pt-online-schema-change
+<ul>
+<li>Percona Toolkit의 도구로, 원본 테이블에 트리거를 걸어서 복사 중의 변경을 새 테이블에 반영한다. 외래 키를 다루는 옵션이 있지만, 트리거가 원본의 모든 쓰기에 추가 비용을 붙인다.</li>
+</ul>
+</li>
+</ul>
+<p>외래 키가 없다면 gh-ost를 먼저 고려하는 게 좋다고 본다. 두 도구 모두 마지막에 테이블 이름을 바꾸는 순간에는 짧은 MDL이 필요해서, 메타데이터 락 실험의 주의점이 똑같이 적용된다.</p>
+<hr/>
+<h1>파티셔닝, 시간으로 자르기</h1>
+<p>파티셔닝은 하나의 테이블을 내부적으로 여러 조각으로 나눠 저장하는 기능이다. 애플리케이션에는 테이블 하나로 보이지만, 디스크에는 파티션마다 별도의 파일이 생긴다. 활동 기록처럼 시간이 지나면 지워야 하는 데이터를 월 단위로 나눠두면, 한 달치를 지우는 일이 파일 하나를 지우는 일이 된다.</p>
+<p>먼저 조건을 알아야 한다.</p>
+<ul>
+<li>파티션 키는 모든 유니크 키에 들어가야 한다. 기본 키도 유니크 키라서, <code>created_at</code>으로 나누려면 기본 키를 <code>(id, created_at)</code>로 바꿔야 한다. 파티션마다 따로 유일성을 검사하기 때문이다. <code>id</code> 단독의 유일성은 AUTO_INCREMENT가 보장해주지만, DB가 강제하지는 않게 된다. 기본 키를 <code>(id)</code>로만 두고 만들면 <code>ERROR 1503</code>으로 바로 거부된다.</li>
+<li>외래 키를 쓸 수 없다. 파티셔닝된 InnoDB 테이블은 외래 키를 가지지도, 참조되지도 못한다.</li>
+<li>기존 테이블에 파티셔닝을 적용하는 건 COPY다. 운영 중인 큰 테이블이라면 위의 도구를 쓰거나, 새 테이블을 만들어서 옮겨야 한다.</li>
+</ul>
+<p>같은 데이터를 2025-10부터 2026-10까지 월별 파티션과, 그 이후를 받는 <code>pmax</code>로 나눈 <code>activity_log_p</code>에 옮겨서 비교한다.</p>
+<pre><code class="language-sql">CREATE TABLE activity_log_p (
+  ...
+  PRIMARY KEY (id, created_at),
+  KEY idx_user_created (user_id, created_at)
+)
+PARTITION BY RANGE COLUMNS (created_at) (
+  PARTITION p202510 VALUES LESS THAN (&#x27;2025-11-01&#x27;),
+  ...
+  PARTITION p202610 VALUES LESS THAN (&#x27;2026-11-01&#x27;),
+  PARTITION pmax    VALUES LESS THAN (MAXVALUE)
+);
+</code></pre>
+<h2>파티션 프루닝</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li><code>created_at</code> 범위가 조건에 있으면 해당 파티션만 읽는다(파티션 프루닝). <code>created_at</code> 조건이 없거나 컬럼에 함수를 씌우면 모든 파티션을 읽는다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+<ul>
+<li>세 가지 조건으로 <code>EXPLAIN</code>의 <code>partitions</code> 칸을 본다. user_id 조회는 파티션 없는 <code>activity_log</code>와 <code>EXPLAIN ANALYZE</code>로 시간도 비교한다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-sql">EXPLAIN SELECT COUNT(*) FROM activity_log_p WHERE created_at &gt;= &#x27;2026-03-01&#x27; AND created_at &lt; &#x27;2026-04-01&#x27;;
+EXPLAIN SELECT id FROM activity_log_p WHERE user_id = 4242 ORDER BY created_at DESC LIMIT 20;
+EXPLAIN SELECT id FROM activity_log_p WHERE DATE(created_at) = &#x27;2026-03-15&#x27;;
+</code></pre>
+<table><thead><tr><th>쿼리</th><th>예상 <code>partitions</code></th><th>관찰</th></tr></thead><tbody><tr><td>created_at 범위</td><td>p202603 하나</td><td></td></tr><tr><td>user_id만</td><td>전체 14개</td><td></td></tr><tr><td><code>DATE(created_at)</code></td><td>전체 14개</td><td></td></tr><tr><td>user_id 조회 시간 (파티션 없음 / 있음)</td><td>파티션 쪽이 같거나 조금 느림</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>파티셔닝은 조회를 빠르게 해주는 기능이 아니다. 파티션 키로 범위를 좁히는 쿼리는 읽을 파티션이 줄지만, 그 쿼리는 원래도 <code>created_at</code> 인덱스로 같은 범위만 읽을 수 있었다. 반대로 파티션 키가 없는 조회는 파티션마다 인덱스를 따로 찾아 들어가야 해서, 파티션이 많을수록 오히려 손해를 본다. 파티셔닝의 진짜 이점은 다음 실험의 데이터 삭제에 있다.</li>
+</ul>
+</li>
+</ul>
+<h2>DELETE와 DROP PARTITION</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>한 달치를 DELETE로 지우면 수십 초가 걸리고, 지운 행 전체가 binlog에 남는다. 같은 양을 DROP PARTITION으로 지우면 1초 안에 끝나고 binlog에는 문장 하나만 남는다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+<ul>
+<li>각 작업 전후로 <code>SHOW BINARY LOG STATUS</code>의 위치를 비교해서 binlog 증가량을 본다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-sql">DELETE FROM activity_log_p WHERE created_at &lt; &#x27;2025-11-01&#x27;;
+ALTER TABLE activity_log_p DROP PARTITION p202511;
+</code></pre>
+<table><thead><tr><th>방식</th><th>예상 시간</th><th>예상 binlog 증가량</th><th>관찰 (시간 / binlog)</th></tr></thead><tbody><tr><td>DELETE (한 달, 약 85만 건)</td><td>수십 초</td><td>약 100MB</td><td></td></tr><tr><td>DROP PARTITION (한 달)</td><td>1초 미만</td><td>수백 바이트</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>DELETE는 행마다 삭제를 기록하고 undo를 남기고, binlog에도 지운 행의 이미지를 전부 남긴다. replica가 있다면 이 100MB를 받아서 다시 한 행씩 지워야 한다. DROP PARTITION은 그 파티션의 파일을 지우는 일이라 행 수와 상관없이 끝나고, binlog에도 ALTER 문장 하나만 남는다. 다만 파일을 지우는 것이라 되돌릴 수 없으니, 보관이 필요하면 지우기 전에 다음의 EXCHANGE로 꺼내둔다.</li>
+</ul>
+</li>
+</ul>
+<h2>파티션 운영</h2>
+<p>파티셔닝을 쓰면 파티션을 관리하는 일이 생긴다.</p>
+<p>미래 파티션은 미리 만든다. <code>pmax</code>가 없는 상태에서 마지막 파티션 범위를 넘는 데이터가 들어오면 INSERT가 실패한다(<code>Table has no partition for value</code>). <code>pmax</code>를 두면 실패하지는 않지만, 데이터가 pmax에 쌓이기 시작하면 나중에 pmax를 쪼갤 때 그 데이터를 전부 옮겨야 한다. 그래서 pmax는 안전망으로만 두고 항상 비어 있게 유지하고, 몇 달 앞의 파티션을 정기적으로 미리 만들어둔다. pmax가 비어 있으면 쪼개는 건 즉시 끝난다.</p>
+<pre><code class="language-sql">ALTER TABLE activity_log_p REORGANIZE PARTITION pmax INTO (
+  PARTITION p202611 VALUES LESS THAN (&#x27;2026-12-01&#x27;),
+  PARTITION pmax    VALUES LESS THAN (MAXVALUE)
+);
+</code></pre>
+<p>이 작업은 쿠버네티스 CronJob이나 애플리케이션의 스케줄러로 매달 돌린다. MySQL의 이벤트 스케줄러로도 할 수 있지만, 실패했을 때 알림을 받기 어려워서 바깥에서 돌리는 쪽을 선호한다.</p>
+<p>지울 파티션을 꺼내서 보관한다. <code>EXCHANGE PARTITION</code>은 파티션 하나와 같은 구조의 일반 테이블을 통째로 맞바꾼다. 데이터를 복사하지 않고 파일의 소속만 바꾸기 때문에 즉시 끝난다. 꺼낸 테이블은 덤프해서 다른 저장소로 옮기고 지우면 된다.</p>
+<pre><code class="language-sql">CREATE TABLE activity_log_202512 LIKE activity_log_p;
+ALTER TABLE activity_log_202512 REMOVE PARTITIONING;
+ALTER TABLE activity_log_p EXCHANGE PARTITION p202512 WITH TABLE activity_log_202512;
+ALTER TABLE activity_log_p DROP PARTITION p202512;
+</code></pre>
+<table><thead><tr><th>항목</th><th>예상</th><th>관찰</th></tr></thead><tbody><tr><td>EXCHANGE 소요 시간</td><td>1초 미만</td><td></td></tr><tr><td>꺼낸 테이블의 행 수</td><td>85만 건 정도</td><td></td></tr><tr><td>원래 파티션의 행 수</td><td>0</td><td></td></tr></tbody></table>
+<p>EXCHANGE는 기본적으로 들어가는 쪽 테이블의 모든 행이 파티션 범위에 맞는지 검사한다. 여기서는 빈 테이블이 들어가서 검사할 게 없었다. 채워진 테이블을 파티션으로 넣을 때는 이 검사가 행 수만큼 걸리고, 범위가 맞는 게 확실하면 <code>WITHOUT VALIDATION</code>으로 건너뛸 수 있다.</p>
+<hr/>
+<h1>아카이빙, 파티션 없이 오래된 데이터 옮기기</h1>
+<p>이미 운영 중인 테이블에 파티셔닝을 적용하기 어렵거나, 외래 키 때문에 적용할 수 없다면 DELETE로 정리해야 한다. 이때 한 번에 지우느냐 나눠서 지우느냐가 큰 차이를 만든다.</p>
+<p>REPEATABLE READ에서 인덱스를 타지 못하는 DELETE는 훑고 지나가는 모든 행에 락을 건다. 조건에 맞지 않아서 지우지 않는 행도 마찬가지다. 그리고 이 락은 DELETE가 커밋할 때까지 풀리지 않는다. <code>created_at</code>에 인덱스가 없는 테이블에서 1년 전 데이터를 지우는 DELETE는 결국 테이블 전체를 훑으면서 전체를 잠그게 된다.</p>
+<h2>한 번에 지우기와 나눠서 옮기기</h2>
+<ul>
+<li>
+<p>가설</p>
+<ul>
+<li>한 번에 DELETE하면, 스캔이 최근 데이터 영역에 도달한 뒤부터 커밋할 때까지 UPDATE가 막혀서 응답 시간이 수 초 이상으로 튄다. 기본 키 범위로 5,000건씩 나눠서 옮기면 각 트랜잭션이 자기 범위만 잠그고 금방 끝나서, UPDATE의 응답 시간이 거의 변하지 않는다.</li>
+</ul>
+</li>
+<li>
+<p>절차</p>
+<ul>
+<li>최근 데이터에 대한 UPDATE를 0.5초마다 3분간 보내면서, 오래된 데이터를 <code>DELETE ... WHERE created_at &lt; &#x27;2025-11-01&#x27;</code> 한 문장으로 지울 때와 아래 프로시저로 나눠서 옮길 때의 UPDATE 응답 시간을 비교한다.</li>
+<li>프로시저는 옮길 범위를 처음에 잠금 없는 일반 SELECT로 한 번만 정한다. 한 덩어리를 옮길 때마다 INSERT와 DELETE를 한 트랜잭션으로 묶어서, 중간에 멈춰도 데이터가 사라지거나 두 군데에 남지 않게 한다.</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-sql">CREATE TABLE activity_log_archive LIKE activity_log;
+
+DELIMITER //
+CREATE PROCEDURE archive_before(IN p_cutoff DATETIME, IN p_chunk INT, IN p_pause DOUBLE)
+BEGIN
+  DECLARE v_lo  BIGINT UNSIGNED;
+  DECLARE v_max BIGINT UNSIGNED;
+  DECLARE v_moved BIGINT DEFAULT 0;
+
+  -- 잠금 없는 일관된 읽기로 옮길 기본 키 범위를 정한다
+  SELECT MIN(id), MAX(id) INTO v_lo, v_max
+  FROM activity_log WHERE created_at &lt; p_cutoff;
+
+  WHILE v_lo IS NOT NULL AND v_lo &lt;= v_max DO
+    START TRANSACTION;
+    INSERT INTO activity_log_archive
+      SELECT * FROM activity_log
+      WHERE id &gt;= v_lo AND id &lt; v_lo + p_chunk AND id &lt;= v_max AND created_at &lt; p_cutoff;
+    DELETE FROM activity_log
+      WHERE id &gt;= v_lo AND id &lt; v_lo + p_chunk AND id &lt;= v_max AND created_at &lt; p_cutoff;
+    SET v_moved = v_moved + ROW_COUNT();
+    COMMIT;
+
+    SET v_lo = v_lo + p_chunk;
+    DO SLEEP(p_pause);   -- 다른 요청과 replica가 숨 쉴 틈
+  END WHILE;
+
+  SELECT v_moved AS moved;
+END//
+DELIMITER ;
+
+CALL archive_before(&#x27;2025-12-01&#x27;, 5000, 0.05);
+</code></pre>
+<table><thead><tr><th>항목</th><th>한 번에 DELETE (예상)</th><th>나눠서 옮기기 (예상)</th><th>관찰</th></tr></thead><tbody><tr><td>정리한 행 수</td><td>85만 건 정도</td><td>85만 건 정도</td><td></td></tr><tr><td>전체 소요 시간</td><td>수십 초</td><td>비슷하거나 더 김</td><td></td></tr><tr><td>가장 긴 트랜잭션</td><td>전체 시간 그대로</td><td>수십 ms</td><td></td></tr><tr><td>트랜잭션 하나의 binlog 크기</td><td>약 100MB</td><td>수백 KB</td><td></td></tr><tr><td>UPDATE 최대 응답 시간</td><td>수 초 이상</td><td>수십 ms</td><td></td></tr><tr><td>UPDATE 에러</td><td>길어지면 1205 Lock wait timeout</td><td>없음</td><td></td></tr></tbody></table>
+<ul>
+<li>관찰 포인트
+<ul>
+<li>나눠서 옮기는 쪽이 전체 시간은 더 걸릴 수 있다. 대신 어느 순간에도 오래 잡고 있는 락이 없고, 트랜잭션 하나의 크기가 작아서 replica도 조금씩 따라온다. 정리 작업은 빨리 끝나는 것보다 서비스에 티가 나지 않는 게 중요하니, 대부분의 경우 나눠서 하는 게 맞는 것 같다. <code>p_chunk</code>와 <code>p_pause</code>는 replica 지연과 응답 시간을 보면서 조절한다.</li>
+</ul>
+</li>
+</ul>
+<p>한 번에 하는 DELETE가 더 위험한 경우도 있다. 정리 대상이 많아서 DELETE가 길어지면 <code>innodb_lock_wait_timeout</code>(기본 50초)을 넘긴 UPDATE들이 에러로 실패하기 시작하고, 수백 MB짜리 트랜잭션 하나가 replica에 그대로 넘어가서 그 트랜잭션을 적용하는 동안 replica 전체가 멈춘다.</p>
+<h2>도구로 하기, pt-archiver</h2>
+<p>같은 일을 하는 무료 도구로 Percona Toolkit의 <code>pt-archiver</code>가 있다. 인덱스를 따라 일정 건수씩 다른 테이블이나 파일로 옮기고 지우며, replica 지연을 보고 속도를 늦추는 옵션도 있다. 위의 프로시저는 원리를 보기 위한 것이고, 운영에서 반복적으로 돌린다면 검증된 도구를 쓰는 게 낫다. 다만 이 경우에도 정리 대상을 빠르게 찾을 수 있는 인덱스나 기본 키 범위가 필요하다는 점은 같다.</p>
+<h2>옮긴 데이터는 어디에 두나</h2>
+<p>같은 서버의 보관용 테이블로 옮기면 운영 테이블은 작아지지만, 디스크와 백업 크기는 그대로다. 보관 데이터를 거의 조회하지 않는다면 덤프해서 오브젝트 스토리지 같은 저렴한 저장소로 옮기고 서버에서는 지우는 게 맞다. 가끔이라도 조회해야 한다면 별도의 분석용 DB로 옮기는 식으로, 얼마나 자주 다시 볼지에 따라 정한다. 어느 쪽이든 먼저 정해야 하는 건 보존 기간이다. 법적으로 몇 년을 보관해야 하는 데이터인지, 서비스가 몇 달까지 보여주는지를 먼저 확인하고 나서야 언제 무엇을 옮길지가 정해진다.</p>
+<hr/>
+<h1>정리</h1>
+<table><thead><tr><th>문제</th><th>대책</th><th>대가</th></tr></thead><tbody><tr><td>특정 조회가 느리다</td><td>등호 → 범위/정렬 순서의 복합 인덱스, 커버링 인덱스</td><td>쓰기마다 인덱스 갱신, 디스크와 메모리</td></tr><tr><td>ALTER가 오래 걸리거나 쓰기를 막는다</td><td><code>ALGORITHM</code>/<code>LOCK</code> 명시, COPY가 필요하면 gh-ost</td><td>replica 지연, 도구 운영</td></tr><tr><td>ALTER가 다른 쿼리를 멈춘다</td><td>짧은 <code>lock_wait_timeout</code> + 재시도, 긴 트랜잭션 확인</td><td>ALTER가 실패할 수 있음</td></tr><tr><td>오래된 데이터 삭제가 무겁다</td><td>시간 기준 파티셔닝 + DROP/EXCHANGE PARTITION</td><td>기본 키 변경, 외래 키 불가, 파티션 관리</td></tr><tr><td>파티셔닝을 쓸 수 없다</td><td>기본 키 범위로 나눠서 아카이빙</td><td>전체 시간은 더 걸림</td></tr></tbody></table>
+<ul>
+<li>테이블이 커져도 잘 맞는 인덱스로 몇 건을 찾는 쿼리는 거의 느려지지 않는다. 느려지는 건 읽는 행 수에 비례하는 작업이다.</li>
+<li>복합 인덱스는 등호 컬럼을 앞에, 범위와 정렬 컬럼을 뒤에 둔다.</li>
+<li>인덱스는 지우기 전에 INVISIBLE로 먼저 숨겨본다.</li>
+<li>ALTER에는 <code>ALGORITHM</code>과 <code>LOCK</code>을 명시해서, 원하는 방식이 불가능하면 실행되지 않게 한다.</li>
+<li>INSTANT ALTER도 메타데이터 락을 기다리고, 기다리는 동안 뒤의 모든 쿼리를 막는다.</li>
+<li>파티셔닝은 조회를 빠르게 하는 기능이 아니라 데이터를 통째로 버리기 쉽게 하는 기능이다.</li>
+<li>대량 삭제는 기본 키 범위로 나눠서, 작은 트랜잭션 여러 개로 한다.</li>
+</ul>
+<p>메타데이터 락 실험에서 SELECT 하나가 20초를 기다리는 걸 보고 나서야, 운영 중에 ALTER를 걸었다가 서비스가 멈췄다는 이야기가 왜 그렇게 흔한지 이해가 됐다. ALTER 자체는 즉시 끝나는 작업이었는데, 그 앞에 열려 있던 트랜잭션 하나 때문에 뒤의 모든 요청이 막혔다. 큰 테이블을 다룰 때는 작업 자체가 얼마나 걸리는지보다, 그 작업이 누구를 기다리고 누구를 기다리게 하는지를 먼저 보게 되는 것 같다.</p>
+<hr/>
+<h1>참고</h1>
+<ul>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/explain.html">MySQL 8.4 Reference Manual, EXPLAIN Statement</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/invisible-indexes.html">MySQL 8.4 Reference Manual, Invisible Indexes</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/sys-schema-unused-indexes.html">MySQL 8.4 Reference Manual, The schema_unused_indexes View</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/innodb-online-ddl-operations.html">MySQL 8.4 Reference Manual, Online DDL Operations</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/metadata-locking.html">MySQL 8.4 Reference Manual, Metadata Locking</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/partitioning-limitations-partitioning-keys-unique-keys.html">MySQL 8.4 Reference Manual, Partitioning Keys, Primary Keys, and Unique Keys</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/partitioning-pruning.html">MySQL 8.4 Reference Manual, Partition Pruning</a></li>
+<li><a href="https://dev.mysql.com/doc/refman/8.4/en/partitioning-management-exchange.html">MySQL 8.4 Reference Manual, Exchanging Partitions and Subpartitions with Tables</a></li>
+<li><a href="https://github.com/github/gh-ost">gh-ost</a></li>
+<li><a href="https://docs.percona.com/percona-toolkit/pt-online-schema-change.html">Percona Toolkit, pt-online-schema-change</a></li>
+<li><a href="https://docs.percona.com/percona-toolkit/pt-archiver.html">Percona Toolkit, pt-archiver</a></li>
+</ul></article></div></div>
+  </body>
+</html>
